@@ -1,0 +1,15 @@
+# Core dependencies
+numpy>=1.24.0
+tqdm>=4.65.0
+pyyaml>=6.0
+requests>=2.31.0
+datasets>=2.14.0
+huggingface-hub>=0.19.0
+safetensors>=0.4.0
+sentencepiece>=0.1.99
+xxhash>=3.4.0
+datasketch>=1.6.0
+ftfy>=6.1.0
+langdetect>=1.0.9
+rich>=13.0.0
+click>=8.1.0

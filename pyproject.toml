@@ -1,0 +1,135 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "auralith-data-pipeline"
+version = "1.0.0"
+description = "Production-grade data collection and processing pipeline for training LLMs and multimodal AI"
+readme = "README.md"
+license = "Apache-2.0"
+authors = [
+    { name = "AuralithAI", email = "contact@auralith.ai" }
+]
+keywords = [
+    "data-pipeline",
+    "machine-learning",
+    "nlp",
+    "llm",
+    "data-processing",
+    "tokenization",
+    "multimodal"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+requires-python = ">=3.10"
+
+dependencies = [
+    "numpy>=1.24.0",
+    "tqdm>=4.65.0",
+    "pyyaml>=6.0",
+    "requests>=2.31.0",
+    "datasets>=2.14.0",
+    "huggingface-hub>=0.19.0",
+    "safetensors>=0.4.0",
+    "sentencepiece>=0.1.99",
+    "xxhash>=3.4.0",
+    "datasketch>=1.6.0",
+    "ftfy>=6.1.0",
+    "langdetect>=1.0.9",
+    "rich>=13.0.0",
+    "click>=8.1.0",
+]
+
+[project.optional-dependencies]
+pdf = [
+    "pdfplumber>=0.10.0",
+    "python-docx>=1.0.0",
+    "python-pptx>=0.6.23",
+    "openpyxl>=3.1.0",
+]
+cloud = [
+    "boto3>=1.28.0",
+    "google-cloud-storage>=2.10.0",
+    "azure-storage-blob>=12.19.0",
+]
+multimodal = [
+    "Pillow>=10.0.0",
+    "librosa>=0.10.0",
+    "opencv-python>=4.8.0",
+    "timm>=0.9.0",
+]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.7.0",
+    "ruff>=0.1.0",
+    "mypy>=1.5.0",
+    "pre-commit>=3.4.0",
+]
+all = [
+    "auralith-data-pipeline[pdf,cloud,multimodal,dev]",
+]
+
+[project.scripts]
+auralith-pipeline = "auralith_pipeline.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/AuralithAI/Auralith-Data-Pipeline"
+Documentation = "https://github.com/AuralithAI/Auralith-Data-Pipeline#readme"
+Repository = "https://github.com/AuralithAI/Auralith-Data-Pipeline"
+Issues = "https://github.com/AuralithAI/Auralith-Data-Pipeline/issues"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/configs",
+    "/scripts",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/auralith_pipeline"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
+include = '\.pyi?$'
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # Pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+ignore = ["E501", "B008", "C901", "B905"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = "-v --tb=short"

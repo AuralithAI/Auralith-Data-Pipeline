@@ -1,0 +1,84 @@
+# Example production configuration for Auralith Data Pipeline
+# Copy this file and modify as needed
+
+pipeline:
+  name: production-pipeline
+  output_dir: ./data/shards
+  temp_dir: ./data/temp
+  
+  # Preprocessing options
+  deduplicate: true
+  quality_filter: true
+  remove_pii: true
+  normalize_text: true
+  
+  # Processing options
+  num_workers: 8
+  batch_size: 1000
+  streaming: true
+  # max_samples: 10000000  # Uncomment to limit samples
+
+# Data sources to collect
+sources:
+  - type: huggingface
+    path: wikipedia
+    name: 20231101.en
+    split: train
+    text_column: text
+    # max_samples: 1000000
+    
+  # - type: huggingface
+  #   path: EleutherAI/pile
+  #   streaming: true
+  #   text_column: text
+
+# Quality filtering settings
+quality:
+  min_text_length: 50
+  max_text_length: 100000
+  min_word_count: 10
+  max_word_count: 50000
+  allowed_languages:
+    - en
+  max_special_char_ratio: 0.3
+  max_digit_ratio: 0.3
+  max_uppercase_ratio: 0.4
+  filter_toxic: true
+  toxic_threshold: 0.7
+
+# Deduplication settings
+deduplication:
+  enabled: true
+  method: minhash
+  minhash_threshold: 0.85
+  minhash_num_perm: 256
+  minhash_bands: 32
+  cache_size: 1000000
+
+# Shard output settings
+sharding:
+  max_size_mb: 1000
+  sequence_length: 2048
+  format: safetensors
+  compression: zstd
+  include_metadata: true
+  create_index: true
+
+# Tokenization settings
+tokenization:
+  # tokenizer_path: ./tokenizer/tokenizer.model  # Optional custom tokenizer
+  vocab_size: 50257
+  model_type: bpe
+  add_special_tokens: true
+  padding: true
+  truncation: true
+  max_length: 2048
+
+# Storage settings for upload
+storage:
+  backend: huggingface
+  repo_id: AuralithAI/training-data
+  # For S3:
+  # backend: s3
+  # bucket: my-bucket
+  # prefix: training-data/
