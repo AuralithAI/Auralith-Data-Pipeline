@@ -356,7 +356,7 @@ Shows:
 ### CLI Monitoring
 
 ```bash
-# Check worker status
+# Check distributed system status
 auralith-pipeline status --coordinator coordinator.internal:8080
 
 # Monitor specific job
@@ -364,11 +364,11 @@ auralith-pipeline job-status \
   --coordinator coordinator.internal:8080 \
   --job-id wikipedia-processing
 
-# Stream logs
-auralith-pipeline logs \
-  --coordinator coordinator.internal:8080 \
-  --job-id wikipedia-processing \
-  --follow
+# Stream logs (if implemented)
+# auralith-pipeline logs \
+#   --coordinator coordinator.internal:8080 \
+#   --job-id wikipedia-processing \
+#   --follow
 ```
 
 ### Programmatic Monitoring
@@ -764,7 +764,7 @@ stats = pipeline.run(
     enable_checkpointing=True,
 )
 
-print(f"✓ Processing complete!")
+print(f"Processing complete!")
 print(f"  Samples: {stats.total_samples:,}")
 print(f"  Shards: {stats.shard_count}")
 print(f"  Size: {stats.total_size_bytes / 1e9:.1f} GB")

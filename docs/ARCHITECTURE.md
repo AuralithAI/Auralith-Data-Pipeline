@@ -445,9 +445,79 @@ docker run -v /data:/data auralith-pipeline collect --dataset wikipedia
 - **Access Control**: Token-based authentication
 - **Audit Logging**: Complete processing history
 
+## Distributed Processing
+
+### 8. Distributed Module (`distributed/`)
+
+**Purpose**: Enable multi-machine processing for large-scale operations
+
+**Key Components**:
+
+#### Coordinator
+- **Job Management**: Task scheduling and distribution
+- **Worker Monitoring**: Heartbeat tracking and health checks
+- **State Management**: Redis-based state store
+- **Fault Tolerance**: Automatic task reassignment on worker failure
+
+#### Worker
+- **Task Execution**: Processes assigned pipeline tasks
+- **Heartbeat**: Regular status updates to coordinator
+- **Resource Reporting**: CPU, memory, and processing metrics
+- **Local Caching**: Efficient temporary storage
+
+#### State Store
+- **Redis Implementation**: Primary state storage backend
+- **Task Queues**: Distributed work queue management
+- **Heartbeat Tracking**: Worker liveness detection
+- **Metadata Storage**: Job and task state persistence
+
+#### Distribution Strategies
+- **Round Robin**: Evenly distributes tasks across workers
+- **Least Busy**: Assigns to worker with smallest queue
+- **Dynamic**: Considers CPU, memory, and queue depth
+
+**Distributed Configuration**:
+```yaml
+coordinator:
+  host: coordinator.internal
+  port: 8080
+  state_store_type: redis
+  heartbeat_interval: 10
+
+workers:
+  - name: collection
+    worker_ids: [worker-1, worker-2]
+    batch_size: 1000
+  - name: processing
+    worker_ids: [worker-3, worker-4]
+    batch_size: 500
+```
+
+**CLI Commands**:
+```bash
+# Start coordinator
+auralith-pipeline coordinator --config distributed.yaml
+
+# Start worker
+auralith-pipeline worker \
+  --coordinator coordinator:8080 \
+  --worker-id worker-1
+
+# Submit job
+auralith-pipeline submit-job \
+  --coordinator coordinator:8080 \
+  --job-name my-job \
+  --dataset wikipedia
+
+# Monitor status
+auralith-pipeline status --coordinator coordinator:8080
+```
+
+For detailed distributed processing setup and deployment, see [Distributed Processing Guide](DISTRIBUTED_PROCESSING.md).
+
 ## Future Enhancements
 
-- [ ] Distributed processing across multiple machines (see [Distributed Processing Guide](DISTRIBUTED_PROCESSING.md))
+- [x] Distributed processing across multiple machines (implemented)
 - [ ] Apache Spark integration for large-scale jobs
 - [ ] Real-time streaming with Kafka/Pub-Sub
 - [ ] Advanced multimodal embeddings

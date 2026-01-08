@@ -1,14 +1,13 @@
 """Worker node for distributed processing."""
 
 import logging
-import time
 import threading
-from typing import Any
+import time
 from datetime import datetime
+from typing import Any
 
 from auralith_pipeline.distributed.config import WorkerPoolConfig
-from auralith_pipeline.distributed.state import StateStore, RedisStateStore
-from auralith_pipeline.pipeline import Pipeline
+from auralith_pipeline.distributed.state import RedisStateStore, StateStore
 
 logger = logging.getLogger(__name__)
 

@@ -1,0 +1,103 @@
+# Distributed processing configuration
+# Use this config to run distributed data processing across multiple machines
+
+coordinator:
+  # Coordinator node settings
+  host: coordinator.internal
+  port: 8080
+  
+  # State store (Redis) configuration
+  state_store_type: redis
+  state_store_host: redis.internal
+  state_store_port: 6379
+  state_store_db: 0
+  
+  # Worker monitoring
+  heartbeat_interval: 10  # seconds
+  heartbeat_timeout: 30   # seconds
+  
+  # Task retry settings
+  max_retries: 3
+  retry_backoff: 5        # seconds
+  task_timeout: 3600      # 1 hour
+  
+  # Checkpointing
+  enable_checkpointing: true
+  checkpoint_interval: 300     # 5 minutes
+  checkpoint_dir: s3://auralith-datasets/checkpoints/
+  keep_last_n_checkpoints: 5
+
+workers:
+  # Collection workers
+  - name: collection
+    worker_ids:
+      - worker-1
+      - worker-2
+    batch_size: 1000
+    num_processes: 4
+    cpu_cores: 4
+    memory_gb: 16
+    
+  # Processing workers  
+  - name: processing
+    worker_ids:
+      - worker-3
+      - worker-4
+    batch_size: 500
+    num_processes: 4
+    cpu_cores: 4
+    memory_gb: 16
+    
+  # Tokenization workers
+  - name: tokenization
+    worker_ids:
+      - worker-5
+      - worker-6
+    batch_size: 100
+    num_processes: 4
+    cpu_cores: 8
+    memory_gb: 32
+
+job:
+  name: distributed-processing
+  num_workers: 6
+  timeout: 86400  # 24 hours
+  
+  # Monitoring
+  enable_monitoring: true
+  monitoring_port: 9090
+  
+  # Output
+  output_dir: s3://auralith-datasets/shards/
+  checkpoint_enabled: true
+
+# Pipeline configuration (same as production.yaml)
+pipeline:
+  output_dir: ./data/shards
+  
+sources:
+  - type: huggingface
+    path: wikipedia
+    max_samples: 10000000
+    distributed: true  # Enable distributed processing
+    
+preprocessing:
+  deduplicate: true
+  quality_filter: true
+  remove_pii: true
+  
+tokenization:
+  tokenizer_path: gpt2
+  max_length: 2048
+  
+sharding:
+  format: safetensors
+  max_size_mb: 1000
+  compression: zstd
+
+storage:
+  backend: s3
+  s3:
+    bucket: auralith-datasets
+    region: us-west-2
+    prefix: distributed/

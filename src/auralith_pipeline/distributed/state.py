@@ -1,10 +1,10 @@
 """State management for distributed processing."""
 
-from abc import ABC, abstractmethod
-from typing import Any
-from datetime import datetime, timedelta
 import json
 import logging
+from abc import ABC, abstractmethod
+from datetime import datetime
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +90,7 @@ class RedisStateStore(StateStore):
             self.client.ping()
             logger.info(f"Connected to Redis at {self.host}:{self.port}")
         except ImportError:
-            raise ImportError("Redis not installed. Install with: pip install redis")
+            raise ImportError("Redis not installed. Install with: pip install redis") from None
         except Exception as e:
             logger.error(f"Failed to connect to Redis: {e}")
             raise

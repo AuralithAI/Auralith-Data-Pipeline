@@ -37,6 +37,7 @@ pip install -e ".[all]"
 
 ### CLI Usage
 
+**Single Machine Processing:**
 ```bash
 # List available datasets
 auralith-pipeline list-datasets
@@ -46,6 +47,34 @@ auralith-pipeline collect --dataset wikipedia --max-samples 10000
 
 # Upload to HuggingFace Hub
 auralith-pipeline upload --source ./data/shards --dest hf://AuralithAI/training-data
+```
+
+**Distributed Processing:**
+```bash
+# Start coordinator node
+auralith-pipeline coordinator --config configs/distributed.yaml
+
+# Start worker nodes (on separate machines)
+auralith-pipeline worker \
+  --config configs/distributed.yaml \
+  --coordinator coordinator.internal:8080 \
+  --worker-id worker-1
+
+# Submit a distributed job
+auralith-pipeline submit-job \
+  --config configs/distributed.yaml \
+  --coordinator coordinator.internal:8080 \
+  --job-name wikipedia-processing \
+  --dataset wikipedia \
+  --output-dir s3://bucket/shards
+
+# Monitor distributed system
+auralith-pipeline status --coordinator coordinator.internal:8080
+
+# Check specific job
+auralith-pipeline job-status \
+  --coordinator coordinator.internal:8080 \
+  --job-id wikipedia-processing
 ```
 
 ### Python API
@@ -170,6 +199,10 @@ ruff check src/ tests/
 
 Apache License 2.0 - See [LICENSE](LICENSE) for details.
 
+## Contributing
+
+See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for guidelines on contributing to this project.
+
 ---
 
-Built with love by [AuralithAI](https://github.com/AuralithAI)
+Built by [AuralithAI](https://github.com/AuralithAI)

@@ -89,8 +89,9 @@ class DistributedConfig:
     @classmethod
     def from_yaml(cls, path: str) -> "DistributedConfig":
         """Load configuration from YAML file."""
-        import yaml
         from pathlib import Path
+
+        import yaml
 
         config_path = Path(path)
         if not config_path.exists():
@@ -107,8 +108,9 @@ class DistributedConfig:
 
     def to_yaml(self, path: str):
         """Save configuration to YAML file."""
-        import yaml
         from pathlib import Path
+
+        import yaml
 
         data = {
             "coordinator": {

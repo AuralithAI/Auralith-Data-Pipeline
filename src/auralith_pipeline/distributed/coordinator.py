@@ -1,16 +1,16 @@
 """Coordinator node for distributed processing."""
 
 import logging
-from typing import Any
-from datetime import datetime
 import threading
 import time
+from datetime import datetime
+from typing import Any
 
 from auralith_pipeline.distributed.config import CoordinatorConfig
-from auralith_pipeline.distributed.state import StateStore, RedisStateStore
+from auralith_pipeline.distributed.state import RedisStateStore, StateStore
 from auralith_pipeline.distributed.strategies import (
-    TaskDistributionStrategy,
     RoundRobinDistribution,
+    TaskDistributionStrategy,
 )
 
 logger = logging.getLogger(__name__)

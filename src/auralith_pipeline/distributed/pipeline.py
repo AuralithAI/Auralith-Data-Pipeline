@@ -3,12 +3,10 @@
 import logging
 from typing import Any
 
-from auralith_pipeline.pipeline import Pipeline
 from auralith_pipeline.config.pipeline_config import PipelineConfig
 from auralith_pipeline.distributed.config import JobConfig
-from auralith_pipeline.distributed.coordinator import Coordinator, JobManager
-from auralith_pipeline.distributed.worker import WorkerPool
 from auralith_pipeline.distributed.state import RedisStateStore
+from auralith_pipeline.pipeline import Pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -98,5 +96,4 @@ class DistributedPipeline:
     def stream(self, batch_size: int = 100):
         """Stream results from distributed pipeline."""
         # This would yield batches as they're processed
-        for batch in self._local_pipeline.stream(batch_size=batch_size):
-            yield batch
+        yield from self._local_pipeline.stream(batch_size=batch_size)

@@ -168,5 +168,247 @@ def run(config_path: str):
     click.echo(stats.summary())
 
 
+# ============================================================================
+# Distributed Processing Commands
+# ============================================================================
+
+
+@main.command()
+@click.option("--config", "-c", required=True, help="Configuration file path")
+@click.option("--host", default="0.0.0.0", help="Host to bind to")
+@click.option("--port", default=8080, type=int, help="Port to bind to")
+def coordinator(config: str, host: str, port: int):
+    """Start a coordinator node for distributed processing."""
+    from auralith_pipeline.distributed import Coordinator, DistributedConfig
+
+    click.echo("=" * 60)
+    click.echo("Starting Auralith Coordinator Node")
+    click.echo("=" * 60)
+
+    # Load configuration
+    dist_config = DistributedConfig.from_yaml(config)
+    dist_config.coordinator.host = host
+    dist_config.coordinator.port = port
+
+    click.echo(f"\nCoordinator: {host}:{port}")
+    click.echo(
+        f"State Store: {dist_config.coordinator.state_store_type} "
+        f"at {dist_config.coordinator.state_store_host}:{dist_config.coordinator.state_store_port}"
+    )
+
+    # Create and start coordinator
+    coord = Coordinator(dist_config.coordinator)
+
+    try:
+        coord.start()
+        click.echo("\n[OK] Coordinator started successfully")
+        click.echo("\nPress Ctrl+C to stop...")
+
+        # Keep running
+        import time
+
+        while coord.is_running():
+            time.sleep(1)
+
+    except KeyboardInterrupt:
+        click.echo("\n\nShutting down coordinator...")
+        coord.stop()
+        click.echo("[OK] Coordinator stopped")
+    except Exception as e:
+        click.echo(f"\n[ERROR] {e}", err=True)
+        coord.stop()
+        raise
+
+
+@main.command()
+@click.option("--config", "-c", required=True, help="Configuration file path")
+@click.option("--coordinator", required=True, help="Coordinator address (host:port)")
+@click.option("--worker-id", required=True, help="Unique worker ID")
+def worker(config: str, coordinator: str, worker_id: str):
+    """Start a worker node for distributed processing."""
+    from auralith_pipeline.distributed import Worker
+    from auralith_pipeline.distributed.state import RedisStateStore
+
+    click.echo("=" * 60)
+    click.echo("Starting Auralith Worker Node")
+    click.echo("=" * 60)
+
+    # Parse coordinator address
+    host, port = coordinator.split(":")
+
+    click.echo(f"\nWorker ID: {worker_id}")
+    click.echo(f"Coordinator: {host}:{port}")
+
+    # Create worker
+    w = Worker(worker_id, host, int(port))
+
+    # Connect to state store (use Redis by default)
+    state_store = RedisStateStore(host=host, port=6379)
+
+    try:
+        w.connect(state_store)
+        w.start()
+
+        click.echo("\n[OK] Worker started successfully")
+        click.echo("[OK] Heartbeat active")
+        click.echo("\nWaiting for tasks... (Press Ctrl+C to stop)")
+
+        # Keep running
+        import time
+
+        while True:
+            time.sleep(1)
+
+    except KeyboardInterrupt:
+        click.echo("\n\nShutting down worker...")
+        w.stop()
+        click.echo("[OK] Worker stopped")
+    except Exception as e:
+        click.echo(f"\n[ERROR] {e}", err=True)
+        w.stop()
+        raise
+
+
+@main.command("submit-job")
+@click.option("--config", "-c", required=True, help="Configuration file path")
+@click.option("--coordinator", required=True, help="Coordinator address (host:port)")
+@click.option("--job-name", required=True, help="Job name")
+@click.option("--dataset", "-d", required=True, help="Dataset to process")
+@click.option("--output-dir", "-o", required=True, help="Output directory")
+@click.option("--max-samples", "-n", type=int, help="Maximum samples")
+def submit_job(
+    config: str,
+    coordinator: str,
+    job_name: str,
+    dataset: str,
+    output_dir: str,
+    max_samples: int,
+):
+    """Submit a distributed processing job."""
+    from auralith_pipeline.distributed import DistributedPipeline, JobConfig
+    from auralith_pipeline.sources.data_sources import create_source
+
+    click.echo("=" * 60)
+    click.echo("Submitting Distributed Job")
+    click.echo("=" * 60)
+
+    # Parse coordinator address
+    host, port = coordinator.split(":")
+
+    click.echo(f"\nJob Name: {job_name}")
+    click.echo(f"Dataset: {dataset}")
+    click.echo(f"Output: {output_dir}")
+    click.echo(f"Coordinator: {host}:{port}")
+
+    # Create job config
+    job_config = JobConfig(
+        name=job_name,
+        coordinator_host=host,
+        coordinator_port=int(port),
+        output_dir=output_dir,
+    )
+
+    # Load pipeline config
+    pipeline_config = PipelineConfig.from_yaml(config)
+
+    # Create distributed pipeline
+    pipeline = DistributedPipeline(job_config, pipeline_config=pipeline_config)
+
+    # Add source
+    source = create_source(dataset, streaming=True, max_samples=max_samples)
+    pipeline.add_source(source)
+
+    click.echo("\n[OK] Job configured")
+    click.echo("Starting job execution...")
+
+    try:
+        # Run the job
+        click.echo("\nStarting job execution...")
+        stats = pipeline.run(output_path=output_dir, monitor=True)
+
+        click.echo("\n" + "=" * 60)
+        click.echo("Job Completed Successfully")
+        click.echo("=" * 60)
+        click.echo(f"\nSamples: {stats['total_samples']:,}")
+        click.echo(f"Shards: {stats.get('shard_count', 'N/A')}")
+        click.echo(f"Time: {stats.get('processing_time_seconds', 0):.1f}s")
+        click.echo(f"Output: {output_dir}")
+
+    except Exception as e:
+        click.echo(f"\n[ERROR] Job failed: {e}", err=True)
+        raise
+
+
+@main.command("job-status")
+@click.option("--coordinator", required=True, help="Coordinator address (host:port)")
+@click.option("--job-id", required=True, help="Job ID")
+def job_status(coordinator: str, job_id: str):
+    """Check status of a distributed job."""
+    from auralith_pipeline.distributed import DistributedClient
+
+    click.echo(f"Checking status for job: {job_id}")
+
+    try:
+        client = DistributedClient(coordinator)
+
+        # Get job info
+        job = client.get_job(job_id)
+
+        click.echo("\n" + "=" * 60)
+        click.echo(f"Job: {job_id}")
+        click.echo("=" * 60)
+        click.echo(f"Status: {job['status']}")
+        click.echo(f"Created: {job.get('created_at', 'N/A')}")
+
+        # Get metrics
+        metrics = client.get_metrics(job_id)
+        click.echo(f"\nProgress: {metrics['completed_tasks']}/{metrics['total_tasks']}")
+        click.echo(f"Throughput: {metrics['throughput']:.1f}%")
+        click.echo(f"Errors: {metrics['failed_tasks']}")
+
+        client.close()
+
+    except Exception as e:
+        click.echo(f"\n[ERROR] {e}", err=True)
+        raise
+
+
+@main.command()
+@click.option("--coordinator", required=True, help="Coordinator address (host:port)")
+def status(coordinator: str):
+    """Check status of distributed system."""
+    from auralith_pipeline.distributed import DistributedClient
+
+    click.echo("=" * 60)
+    click.echo("Distributed System Status")
+    click.echo("=" * 60)
+
+    try:
+        client = DistributedClient(coordinator)
+
+        # List workers
+        workers = client.list_workers()
+
+        click.echo(f"\nCoordinator: {coordinator}")
+        click.echo(f"Active Workers: {len(workers)}")
+
+        if workers:
+            click.echo("\nWorkers:")
+            for worker in workers:
+                click.echo(
+                    f"  • {worker['id']}: "
+                    f"CPU={worker.get('cpu_usage', 0)}% "
+                    f"Memory={worker.get('memory_usage', 0)}%"
+                )
+        else:
+            click.echo("\n[WARNING] No active workers")
+
+        client.close()
+
+    except Exception as e:
+        click.echo(f"\n[ERROR] {e}", err=True)
+        click.echo("\nMake sure the coordinator is running and Redis is accessible.")
+
+
 if __name__ == "__main__":
     main()
