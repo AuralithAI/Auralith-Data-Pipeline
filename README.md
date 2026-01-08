@@ -77,18 +77,35 @@ print(f"Processed {stats.total_samples:,} samples")
 | Multimodal support | Images, audio, video with embedding generation |
 | SafeTensors shards | Fast, memory-mapped, secure format |
 | Cloud storage | HuggingFace Hub, S3, GCS, Azure Blob |
+| Distributed processing | Multi-machine orchestration with Redis |
 | CI/CD ready | GitHub Actions workflows included |
 
 ## Architecture & Documentation
 
-For a comprehensive understanding of the pipeline architecture, data flow, and component interactions, see the **[Architecture Documentation](docs/ARCHITECTURE.md)**. It includes:
+### Core Documentation
 
+- **[Architecture Documentation](docs/ARCHITECTURE.md)** - System design with visual diagrams, component descriptions, and data flow examples
+- **[Distributed Processing Guide](docs/DISTRIBUTED_PROCESSING.md)** - Multi-machine processing setup, orchestration, monitoring, and cloud deployment
+
+### What You'll Learn
+
+**Architecture Documentation**:
 - High-level system design with visual diagrams
 - Detailed component descriptions and data formats
 - Complete data flow examples
 - Performance considerations and optimization tips
 - Extension points for custom components
 - Deployment and security guidelines
+
+**Distributed Processing**:
+- Multi-machine architecture and task distribution
+- Coordinator and worker setup
+- Redis/Etcd state management
+- Cloud deployment (AWS, GCP, Kubernetes)
+- Monitoring dashboards and CLI tools
+- Fault tolerance and recovery mechanisms
+- Performance optimization strategies
+- Troubleshooting guide and best practices
 
 ## Configuration
 

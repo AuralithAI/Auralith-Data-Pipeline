@@ -447,7 +447,7 @@ docker run -v /data:/data auralith-pipeline collect --dataset wikipedia
 
 ## Future Enhancements
 
-- [ ] Distributed processing across multiple machines
+- [ ] Distributed processing across multiple machines (see [Distributed Processing Guide](DISTRIBUTED_PROCESSING.md))
 - [ ] Apache Spark integration for large-scale jobs
 - [ ] Real-time streaming with Kafka/Pub-Sub
 - [ ] Advanced multimodal embeddings
