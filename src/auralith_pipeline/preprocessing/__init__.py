@@ -2,10 +2,10 @@
 
 from auralith_pipeline.preprocessing.preprocessor import (
     DataPreprocessor,
-    TextNormalizer,
-    QualityFilter,
     MinHashDeduplicator,
     PIIRemover,
+    QualityFilter,
+    TextNormalizer,
 )
 
 __all__ = [

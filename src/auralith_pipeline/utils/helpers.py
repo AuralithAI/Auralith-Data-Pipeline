@@ -2,17 +2,16 @@
 
 import logging
 import sys
-from typing import Optional
 
 
 def setup_logging(
     level: str = "INFO",
-    format_str: Optional[str] = None,
+    format_str: str | None = None,
 ) -> logging.Logger:
     """Setup logging configuration."""
     if format_str is None:
         format_str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    
+
     logging.basicConfig(
         level=getattr(logging, level.upper()),
         format=format_str,
@@ -20,7 +19,7 @@ def setup_logging(
             logging.StreamHandler(sys.stdout),
         ],
     )
-    
+
     return logging.getLogger("auralith_pipeline")
 
 

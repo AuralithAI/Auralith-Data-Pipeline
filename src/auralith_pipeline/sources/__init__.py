@@ -1,12 +1,12 @@
 """Data sources module."""
 
 from auralith_pipeline.sources.data_sources import (
-    DataSource,
-    DataSample,
-    HuggingFaceSource,
-    LocalFileSource,
-    JSONLSource,
     DATASET_REGISTRY,
+    DataSample,
+    DataSource,
+    HuggingFaceSource,
+    JSONLSource,
+    LocalFileSource,
     create_source,
 )
 

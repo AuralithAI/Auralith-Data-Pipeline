@@ -1,10 +1,10 @@
 """Storage module."""
 
 from auralith_pipeline.storage.backends import (
-    StorageBackend,
+    GCSStorage,
     HuggingFaceStorage,
     S3Storage,
-    GCSStorage,
+    StorageBackend,
     UploadResult,
     create_storage_backend,
 )

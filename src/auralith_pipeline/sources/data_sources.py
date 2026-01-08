@@ -1,9 +1,10 @@
 """Data sources module for ingesting data from various sources."""
 
-from dataclasses import dataclass, field
-from typing import Iterator, Dict, Any, Optional, List, Literal
-from abc import ABC, abstractmethod
 import logging
+from abc import ABC, abstractmethod
+from collections.abc import Iterator
+from dataclasses import dataclass, field
+from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
@@ -11,16 +12,16 @@ logger = logging.getLogger(__name__)
 @dataclass
 class DataSample:
     """A single data sample."""
-    
+
     content: str
     source: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     modality: Literal["text", "image", "audio", "video", "code"] = "text"
-    
+
     @property
     def word_count(self) -> int:
         return len(self.content.split())
-    
+
     @property
     def char_count(self) -> int:
         return len(self.content)
@@ -28,17 +29,17 @@ class DataSample:
 
 class DataSource(ABC):
     """Abstract base class for data sources."""
-    
+
     @abstractmethod
     def __iter__(self) -> Iterator[DataSample]:
         """Iterate over data samples."""
         pass
-    
+
     @abstractmethod
     def __len__(self) -> int:
         """Return estimated number of samples."""
         pass
-    
+
     @property
     @abstractmethod
     def name(self) -> str:
@@ -48,15 +49,15 @@ class DataSource(ABC):
 
 class HuggingFaceSource(DataSource):
     """Load data from HuggingFace datasets."""
-    
+
     def __init__(
         self,
         path: str,
-        name: Optional[str] = None,
+        name: str | None = None,
         split: str = "train",
         text_column: str = "text",
         streaming: bool = True,
-        max_samples: Optional[int] = None,
+        max_samples: int | None = None,
         **kwargs,
     ):
         self.path = path
@@ -68,12 +69,12 @@ class HuggingFaceSource(DataSource):
         self.kwargs = kwargs
         self._dataset = None
         self._len = None
-    
+
     def _load_dataset(self):
         """Lazy load the dataset."""
         if self._dataset is None:
             from datasets import load_dataset
-            
+
             logger.info(f"Loading dataset: {self.path}")
             self._dataset = load_dataset(
                 self.path,
@@ -83,19 +84,19 @@ class HuggingFaceSource(DataSource):
                 **self.kwargs,
             )
         return self._dataset
-    
+
     def __iter__(self) -> Iterator[DataSample]:
         dataset = self._load_dataset()
         count = 0
-        
+
         for item in dataset:
             if self.max_samples and count >= self.max_samples:
                 break
-            
+
             text = item.get(self.text_column, "")
             if not text:
                 continue
-            
+
             yield DataSample(
                 content=text,
                 source=f"huggingface/{self.path}",
@@ -105,7 +106,7 @@ class HuggingFaceSource(DataSource):
                 },
             )
             count += 1
-    
+
     def __len__(self) -> int:
         if self._len is None:
             if self.max_samples:
@@ -115,7 +116,7 @@ class HuggingFaceSource(DataSource):
             else:
                 self._len = -1  # Unknown for streaming
         return self._len
-    
+
     @property
     def name(self) -> str:
         return f"huggingface/{self.path}"
@@ -123,34 +124,34 @@ class HuggingFaceSource(DataSource):
 
 class LocalFileSource(DataSource):
     """Load data from local files."""
-    
+
     def __init__(
         self,
         path: str,
         pattern: str = "**/*.txt",
         encoding: str = "utf-8",
-        max_samples: Optional[int] = None,
+        max_samples: int | None = None,
     ):
         from pathlib import Path
-        
+
         self.path = Path(path)
         self.pattern = pattern
         self.encoding = encoding
         self.max_samples = max_samples
         self._files = None
-    
-    def _get_files(self) -> List:
+
+    def _get_files(self) -> list:
         if self._files is None:
             self._files = list(self.path.glob(self.pattern))
         return self._files
-    
+
     def __iter__(self) -> Iterator[DataSample]:
         count = 0
-        
+
         for file_path in self._get_files():
             if self.max_samples and count >= self.max_samples:
                 break
-            
+
             try:
                 content = file_path.read_text(encoding=self.encoding)
                 yield DataSample(
@@ -165,12 +166,12 @@ class LocalFileSource(DataSource):
             except Exception as e:
                 logger.warning(f"Failed to read {file_path}: {e}")
                 continue
-    
+
     def __len__(self) -> int:
         if self.max_samples:
             return min(self.max_samples, len(self._get_files()))
         return len(self._get_files())
-    
+
     @property
     def name(self) -> str:
         return f"local/{self.path}"
@@ -178,26 +179,26 @@ class LocalFileSource(DataSource):
 
 class JSONLSource(DataSource):
     """Load data from JSONL files."""
-    
+
     def __init__(
         self,
         path: str,
         text_field: str = "text",
-        max_samples: Optional[int] = None,
+        max_samples: int | None = None,
     ):
         self.path = path
         self.text_field = text_field
         self.max_samples = max_samples
-    
+
     def __iter__(self) -> Iterator[DataSample]:
         import json
-        
+
         count = 0
-        with open(self.path, "r", encoding="utf-8") as f:
+        with open(self.path, encoding="utf-8") as f:
             for line in f:
                 if self.max_samples and count >= self.max_samples:
                     break
-                
+
                 try:
                     item = json.loads(line)
                     text = item.get(self.text_field, "")
@@ -210,14 +211,14 @@ class JSONLSource(DataSource):
                         count += 1
                 except json.JSONDecodeError:
                     continue
-    
+
     def __len__(self) -> int:
         if self.max_samples:
             return self.max_samples
         # Estimate line count
-        with open(self.path, "r") as f:
+        with open(self.path) as f:
             return sum(1 for _ in f)
-    
+
     @property
     def name(self) -> str:
         return f"jsonl/{self.path}"
@@ -274,17 +275,17 @@ DATASET_REGISTRY = {
 def create_source(
     name: str,
     streaming: bool = True,
-    max_samples: Optional[int] = None,
+    max_samples: int | None = None,
     **kwargs,
 ) -> HuggingFaceSource:
     """Create a data source from the registry."""
     if name not in DATASET_REGISTRY:
         raise ValueError(f"Unknown dataset: {name}. Available: {list(DATASET_REGISTRY.keys())}")
-    
+
     config = DATASET_REGISTRY[name].copy()
     config.pop("description", None)
     config.update(kwargs)
-    
+
     return HuggingFaceSource(
         streaming=streaming,
         max_samples=max_samples,

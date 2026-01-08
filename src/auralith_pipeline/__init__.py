@@ -6,7 +6,7 @@ large language models and multimodal AI systems.
 
 Usage:
     from auralith_pipeline import Pipeline, PipelineConfig
-    
+
     config = PipelineConfig.from_preset("production")
     pipeline = Pipeline(config)
     pipeline.run()

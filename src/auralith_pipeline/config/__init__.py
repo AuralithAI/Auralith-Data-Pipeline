@@ -1,12 +1,12 @@
 """Configuration module."""
 
 from auralith_pipeline.config.pipeline_config import (
+    DeduplicationConfig,
     PipelineConfig,
     QualityConfig,
-    DeduplicationConfig,
     ShardConfig,
-    TokenizationConfig,
     StorageConfig,
+    TokenizationConfig,
 )
 
 __all__ = [

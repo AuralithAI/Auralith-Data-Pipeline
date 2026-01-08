@@ -79,24 +79,16 @@ print(f"Processed {stats.total_samples:,} samples")
 | Cloud storage | HuggingFace Hub, S3, GCS, Azure Blob |
 | CI/CD ready | GitHub Actions workflows included |
 
-## Project Structure
+## Architecture & Documentation
 
-```
-Auralith-Data-Pipeline/
-├── src/auralith_pipeline/    # Main package
-│   ├── config/               # Configuration
-│   ├── sources/              # Data sources
-│   ├── preprocessing/        # Cleaning & filtering
-│   ├── extraction/           # Content extraction
-│   ├── tokenization/         # Tokenizers
-│   ├── sharding/             # Shard creation
-│   ├── storage/              # Upload/download
-│   └── utils/                # Utilities
-├── tests/                    # Test suite
-├── scripts/                  # Utility scripts
-├── configs/                  # Example configs
-└── docs/                     # Documentation
-```
+For a comprehensive understanding of the pipeline architecture, data flow, and component interactions, see the **[Architecture Documentation](docs/ARCHITECTURE.md)**. It includes:
+
+- High-level system design with visual diagrams
+- Detailed component descriptions and data formats
+- Complete data flow examples
+- Performance considerations and optimization tips
+- Extension points for custom components
+- Deployment and security guidelines
 
 ## Configuration
 
