@@ -270,4 +270,4 @@ class DataPreprocessor:
     def reset(self):
         """Reset preprocessor state."""
         self.deduplicator.reset()
-        self.stats = {k: 0 for k in self.stats}
+        self.stats = dict.fromkeys(self.stats, 0)
