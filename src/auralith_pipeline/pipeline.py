@@ -2,7 +2,7 @@
 
 import logging
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -94,7 +94,7 @@ class Pipeline:
     def run(
         self,
         max_samples: int | None = None,
-        progress_callback: callable | None = None,
+        progress_callback: Callable[[int], None] | None = None,
     ) -> PipelineStats:
         """Run the pipeline."""
         start_time = time.time()
