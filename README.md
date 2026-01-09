@@ -35,46 +35,64 @@ source venv/bin/activate  # Linux/Mac
 pip install -e ".[all]"
 ```
 
+### Deployment Options
+
+**Local Development:**
+```bash
+pip install -e ".[all]"
+```
+
+**Docker (Recommended for Testing):**
+```bash
+docker-compose up -d
+```
+
+**GitHub Actions (Scheduled Pipeline):**
+See [GitHub Actions Pipeline Guide](docs/GITHUB_ACTIONS_PIPELINE.md) for automated data processing.
+
 ### CLI Usage
 
-**Single Machine Processing:**
+**Basic Processing:**
 ```bash
 # List available datasets
 auralith-pipeline list-datasets
 
-# Collect Wikipedia
-auralith-pipeline collect --dataset wikipedia --max-samples 10000
+# Collect and process Wikipedia
+auralith-pipeline collect \
+  --dataset wikipedia \
+  --output ./data/shards \
+  --max-samples 100000 \
+  --deduplicate \
+  --quality-filter \
+  --preset production
 
-# Upload to HuggingFace Hub
-auralith-pipeline upload --source ./data/shards --dest hf://AuralithAI/training-data
+# Upload to S3
+aws s3 sync ./data/shards s3://your-bucket/datasets/wikipedia/
 ```
 
-**Distributed Processing:**
+**Large-Scale Processing with Spark:**
 ```bash
-# Start coordinator node
-auralith-pipeline coordinator --config configs/distributed.yaml
+# Process large datasets with Spark
+auralith-pipeline spark-submit \
+  --input s3://bucket/raw-data \
+  --output s3://bucket/processed \
+  --dataset-name wikipedia \
+  --master local[*] \
+  --executor-memory 8g \
+  --deduplicate \
+  --quality-filter
+```
 
-# Start worker nodes (on separate machines)
-auralith-pipeline worker \
-  --config configs/distributed.yaml \
-  --coordinator coordinator.internal:8080 \
-  --worker-id worker-1
+**Scheduled Automation:**
+The pipeline runs automatically via GitHub Actions:
+- **Weekly**: Every Sunday at 2 AM UTC
+- **Manual**: Trigger from Actions tab
+- **Output**: SafeTensors shards uploaded to S3
 
-# Submit a distributed job
-auralith-pipeline submit-job \
-  --config configs/distributed.yaml \
-  --coordinator coordinator.internal:8080 \
-  --job-name wikipedia-processing \
-  --dataset wikipedia \
-  --output-dir s3://bucket/shards
+See [GitHub Actions Pipeline](docs/GITHUB_ACTIONS_PIPELINE.md) for setup.
+docker-compose up -d --scale worker=5
 
-# Monitor distributed system
-auralith-pipeline status --coordinator coordinator.internal:8080
-
-# Check specific job
-auralith-pipeline job-status \
-  --coordinator coordinator.internal:8080 \
-  --job-id wikipedia-processing
+# See docker/README.md for details
 ```
 
 ### Python API

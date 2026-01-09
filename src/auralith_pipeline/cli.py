@@ -410,5 +410,89 @@ def status(coordinator: str):
         click.echo("\nMake sure the coordinator is running and Redis is accessible.")
 
 
+@main.command("spark-submit")
+@click.option("--input", "-i", required=True, help="Input data path")
+@click.option("--output", "-o", required=True, help="Output path for processed data")
+@click.option("--dataset-name", "-d", required=True, help="Dataset name")
+@click.option("--master", "-m", default="local[*]", help="Spark master URL")
+@click.option("--executor-memory", default="4g", help="Executor memory")
+@click.option("--driver-memory", default="2g", help="Driver memory")
+@click.option("--num-executors", type=int, default=2, help="Number of executors")
+@click.option("--tokenizer", default="gpt2", help="Tokenizer name")
+@click.option("--max-length", type=int, default=2048, help="Maximum sequence length")
+@click.option("--deduplicate/--no-deduplicate", default=True, help="Enable deduplication")
+@click.option("--quality-filter/--no-quality-filter", default=True, help="Enable quality filtering")
+@click.option("--remove-pii/--no-remove-pii", default=True, help="Remove PII")
+@click.option("--num-partitions", type=int, default=100, help="Number of output partitions")
+def spark_submit(
+    input: str,
+    output: str,
+    dataset_name: str,
+    master: str,
+    executor_memory: str,
+    driver_memory: str,
+    num_executors: int,
+    tokenizer: str,
+    max_length: int,
+    deduplicate: bool,
+    quality_filter: bool,
+    remove_pii: bool,
+    num_partitions: int,
+):
+    """Submit a large-scale processing job to Apache Spark."""
+    from auralith_pipeline.spark import SparkConfig, SparkJobConfig, SparkPipelineRunner
+
+    click.echo("=" * 60)
+    click.echo("Spark Pipeline Job")
+    click.echo("=" * 60)
+    click.echo(f"Input: {input}")
+    click.echo(f"Output: {output}")
+    click.echo(f"Dataset: {dataset_name}")
+    click.echo(f"Master: {master}")
+    click.echo("-" * 60)
+
+    # Create Spark configuration
+    spark_config = SparkConfig(
+        app_name=f"Auralith-{dataset_name}",
+        master=master,
+        executor_memory=executor_memory,
+        driver_memory=driver_memory,
+        num_executors=num_executors,
+    )
+
+    # Create job configuration
+    job_config = SparkJobConfig(
+        input_path=input,
+        output_path=output,
+        dataset_name=dataset_name,
+        tokenizer_name=tokenizer,
+        max_length=max_length,
+        deduplicate=deduplicate,
+        quality_filter=quality_filter,
+        remove_pii=remove_pii,
+        num_partitions=num_partitions,
+    )
+
+    # Run the job
+    runner = SparkPipelineRunner(spark_config)
+
+    try:
+        click.echo("\n[OK] Starting Spark job...")
+        stats = runner.run(job_config)
+
+        click.echo("\n[OK] Job completed successfully!")
+        click.echo("-" * 60)
+        click.echo(f"Initial samples: {stats['initial_samples']:,}")
+        click.echo(f"Final samples: {stats['final_samples']:,}")
+        click.echo(f"Filtered: {stats['filtered_samples']:,}")
+        click.echo(f"Output: {stats['output_path']}")
+
+    except Exception as e:
+        click.echo(f"\n[ERROR] Job failed: {e}", err=True)
+        raise
+    finally:
+        runner.stop()
+
+
 if __name__ == "__main__":
     main()

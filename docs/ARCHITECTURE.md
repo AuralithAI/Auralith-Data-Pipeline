@@ -515,10 +515,164 @@ auralith-pipeline status --coordinator coordinator:8080
 
 For detailed distributed processing setup and deployment, see [Distributed Processing Guide](DISTRIBUTED_PROCESSING.md).
 
+## 9. Apache Spark Integration
+
+For processing datasets at massive scale (petabytes), the pipeline integrates with Apache Spark:
+
+**Components**:
+- `SparkPipelineRunner`: Main entry point for Spark jobs
+- `SparkConfig`: Cluster configuration (executors, memory, cores)
+- `SparkJobConfig`: Job-specific settings (input/output, transformations)
+- `spark.transforms`: Distributed transformations (preprocess, deduplicate, tokenize)
+
+**Architecture**:
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    SPARK CLUSTER                             │
+│  ┌────────────┐     ┌────────────┐     ┌────────────┐       │
+│  │   Driver   │────▶│  Executor  │     │  Executor  │       │
+│  │            │     │            │     │            │       │
+│  │  Pipeline  │     │  Worker    │     │  Worker    │       │
+│  │  Runner    │     │  Tasks     │     │  Tasks     │       │
+│  └────────────┘     └────────────┘     └────────────┘       │
+│         │                  │                  │              │
+│         ▼                  ▼                  ▼              │
+│  ┌──────────────────────────────────────────────────┐       │
+│  │        Distributed DataFrame Processing          │       │
+│  │                                                   │       │
+│  │  • Read from S3/HDFS/Parquet                    │       │
+│  │  • Preprocess (normalize, quality filter, PII)  │       │
+│  │  • Deduplicate (MinHashLSH)                     │       │
+│  │  • Tokenize (broadcast tokenizer)               │       │
+│  │  • Write shards to output                       │       │
+│  └──────────────────────────────────────────────────┘       │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Configuration Example**:
+```python
+from auralith_pipeline.spark import (
+    SparkConfig, 
+    SparkJobConfig, 
+    SparkPipelineRunner
+)
+
+# Cluster configuration
+spark_config = SparkConfig(
+    app_name="wikipedia-processing",
+    master="spark://spark-master:7077",  # or yarn, mesos, k8s
+    executor_memory="8g",
+    driver_memory="4g",
+    num_executors=10,
+    executor_cores=4,
+    dynamic_allocation=True
+)
+
+# Job configuration
+job_config = SparkJobConfig(
+    input_path="s3://bucket/raw/wikipedia/*.parquet",
+    output_path="s3://bucket/processed/wikipedia",
+    dataset_name="wikipedia",
+    tokenizer_name="gpt2",
+    max_length=2048,
+    deduplicate=True,
+    quality_filter=True,
+    remove_pii=True,
+    num_partitions=1000,
+    compression="snappy"
+)
+
+# Run job
+runner = SparkPipelineRunner(spark_config)
+stats = runner.run(job_config)
+runner.stop()
+```
+
+**CLI Usage**:
+```bash
+# Submit to Spark cluster
+auralith-pipeline spark-submit \
+  --input s3://bucket/raw-data \
+  --output s3://bucket/processed \
+  --dataset-name wikipedia \
+  --master spark://spark-master:7077 \
+  --executor-memory 8g \
+  --driver-memory 4g \
+  --num-executors 10 \
+  --executor-cores 4 \
+  --tokenizer gpt2 \
+  --max-length 2048 \
+  --deduplicate \
+  --quality-filter \
+  --remove-pii \
+  --num-partitions 1000
+```
+
+**Features**:
+- Scales to petabyte-scale datasets
+- Fault-tolerant with task retry
+- Dynamic resource allocation
+- Broadcast tokenizer for efficient processing
+- MinHashLSH for distributed deduplication
+- Configurable output partitioning
+
+**Deployment**:
+```bash
+# Using Docker Compose
+docker-compose up -d spark-master spark-worker
+
+# Kubernetes
+kubectl apply -f docker/kubernetes/spark-deployment.yaml
+
+# Submit job
+auralith-pipeline spark-submit --master spark://spark-master:7077 ...
+```
+
+## 10. Docker Deployment
+
+Complete containerized deployment with Docker and Kubernetes support:
+
+**Docker Compose Services**:
+- Redis: State store for distributed coordination
+- Coordinator: Job manager and orchestrator
+- Workers: Parallel processing nodes (scalable)
+- Spark Master: Spark cluster manager
+- Spark Workers: Spark execution nodes (scalable)
+
+**Quick Start**:
+```bash
+# Start everything
+docker-compose up -d
+
+# Scale workers
+docker-compose up -d --scale worker=5
+docker-compose up -d --scale spark-worker=4
+
+# View logs
+docker-compose logs -f coordinator
+
+# Stop everything
+docker-compose down
+```
+
+**Kubernetes Deployment**:
+```bash
+# Deploy to cluster
+kubectl apply -f docker/kubernetes/deployment.yaml
+
+# Scale workers
+kubectl scale deployment worker -n auralith --replicas=10
+
+# Auto-scaling enabled (3-10 replicas based on CPU/memory)
+```
+
+See [docker/README.md](../docker/README.md) for detailed deployment instructions.
+
 ## Future Enhancements
 
 - [x] Distributed processing across multiple machines (implemented)
-- [ ] Apache Spark integration for large-scale jobs
+- [x] Apache Spark integration for large-scale jobs (implemented)
+- [x] Docker and Kubernetes deployment (implemented)
 - [ ] Real-time streaming with Kafka/Pub-Sub
 - [ ] Advanced multimodal embeddings
 - [ ] Active learning feedback loop

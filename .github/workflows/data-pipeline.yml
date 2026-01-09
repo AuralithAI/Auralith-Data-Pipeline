@@ -1,0 +1,214 @@
+name: Data Processing Pipeline
+
+on:
+  # Run weekly on Sundays at 2 AM UTC
+  schedule:
+    - cron: '0 2 * * 0'
+  
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      dataset:
+        description: 'Dataset to process'
+        required: true
+        type: choice
+        options:
+          - wikipedia
+          - the_pile
+          - c4
+          - arxiv
+          - all
+      max_samples:
+        description: 'Maximum samples to process (leave empty for all)'
+        required: false
+        type: string
+
+env:
+  PYTHON_VERSION: '3.11'
+  S3_BUCKET: ${{ secrets.S3_BUCKET }}
+  AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+
+jobs:
+  process-data:
+    name: Process Dataset
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 hours max
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[all]"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Process Wikipedia Dataset
+        if: github.event.inputs.dataset == 'wikipedia' || github.event.inputs.dataset == 'all' || github.event_name == 'schedule'
+        run: |
+          auralith-pipeline collect \
+            --dataset wikipedia \
+            --output ./data/shards/wikipedia \
+            --max-samples ${{ github.event.inputs.max_samples || '100000' }} \
+            --streaming \
+            --deduplicate \
+            --quality-filter \
+            --preset production
+
+      - name: Upload Wikipedia to S3
+        if: success()
+        run: |
+          aws s3 sync ./data/shards/wikipedia s3://$S3_BUCKET/datasets/wikipedia/ \
+            --storage-class INTELLIGENT_TIERING
+
+      - name: Process The Pile Dataset
+        if: github.event.inputs.dataset == 'the_pile' || github.event.inputs.dataset == 'all'
+        run: |
+          auralith-pipeline collect \
+            --dataset the_pile \
+            --output ./data/shards/the_pile \
+            --max-samples ${{ github.event.inputs.max_samples || '50000' }} \
+            --streaming \
+            --deduplicate \
+            --quality-filter \
+            --preset production
+
+      - name: Upload The Pile to S3
+        if: success() && (github.event.inputs.dataset == 'the_pile' || github.event.inputs.dataset == 'all')
+        run: |
+          aws s3 sync ./data/shards/the_pile s3://$S3_BUCKET/datasets/the_pile/ \
+            --storage-class INTELLIGENT_TIERING
+
+      - name: Process C4 Dataset
+        if: github.event.inputs.dataset == 'c4' || github.event.inputs.dataset == 'all'
+        run: |
+          auralith-pipeline collect \
+            --dataset c4 \
+            --output ./data/shards/c4 \
+            --max-samples ${{ github.event.inputs.max_samples || '50000' }} \
+            --streaming \
+            --deduplicate \
+            --quality-filter \
+            --preset production
+
+      - name: Upload C4 to S3
+        if: success() && (github.event.inputs.dataset == 'c4' || github.event.inputs.dataset == 'all')
+        run: |
+          aws s3 sync ./data/shards/c4 s3://$S3_BUCKET/datasets/c4/ \
+            --storage-class INTELLIGENT_TIERING
+
+      - name: Process ArXiv Dataset
+        if: github.event.inputs.dataset == 'arxiv' || github.event.inputs.dataset == 'all'
+        run: |
+          auralith-pipeline collect \
+            --dataset arxiv \
+            --output ./data/shards/arxiv \
+            --max-samples ${{ github.event.inputs.max_samples || '50000' }} \
+            --streaming \
+            --deduplicate \
+            --quality-filter \
+            --preset production
+
+      - name: Upload ArXiv to S3
+        if: success() && (github.event.inputs.dataset == 'arxiv' || github.event.inputs.dataset == 'all')
+        run: |
+          aws s3 sync ./data/shards/arxiv s3://$S3_BUCKET/datasets/arxiv/ \
+            --storage-class INTELLIGENT_TIERING
+
+      - name: Generate processing report
+        if: always()
+        run: |
+          echo "# Data Processing Report" > report.md
+          echo "" >> report.md
+          echo "**Date:** $(date)" >> report.md
+          echo "**Dataset:** ${{ github.event.inputs.dataset || 'wikipedia' }}" >> report.md
+          echo "**Status:** ${{ job.status }}" >> report.md
+          echo "" >> report.md
+          
+          if [ -d "./data/shards" ]; then
+            echo "## Output Shards" >> report.md
+            find ./data/shards -name "*.safetensors" -exec ls -lh {} \; >> report.md
+            echo "" >> report.md
+            echo "**Total Size:** $(du -sh ./data/shards | cut -f1)" >> report.md
+          fi
+
+      - name: Upload report to S3
+        if: always()
+        run: |
+          aws s3 cp report.md s3://$S3_BUCKET/reports/$(date +%Y-%m-%d)-report.md
+
+      - name: Notify on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '⚠️ Data Pipeline Failed',
+              body: `The data processing pipeline failed.\n\nWorkflow: ${context.workflow}\nRun: ${context.runNumber}\nSee: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            })
+
+  process-spark-large-scale:
+    name: Process with Spark (Large Datasets)
+    runs-on: ubuntu-latest
+    if: github.event.inputs.dataset == 'all' && github.event_name == 'workflow_dispatch'
+    timeout-minutes: 720  # 12 hours for large jobs
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies with Spark
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[all]"
+          pip install pyspark
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Process with Spark (Local mode)
+        env:
+          SPARK_MASTER: ${{ secrets.SPARK_MASTER || 'local[*]' }}
+        run: |
+          auralith-pipeline spark-submit \
+            --input s3://$S3_BUCKET/raw-data/ \
+            --output s3://$S3_BUCKET/processed/ \
+            --dataset-name bulk-processing \
+            --master $SPARK_MASTER \
+            --executor-memory 4g \
+            --driver-memory 2g \
+            --deduplicate \
+            --quality-filter \
+            --remove-pii
+
+      - name: Upload Spark logs
+        if: always()
+        run: |
+          if [ -d "spark-logs" ]; then
+            aws s3 sync spark-logs s3://$S3_BUCKET/logs/spark/$(date +%Y-%m-%d)/
+          fi
