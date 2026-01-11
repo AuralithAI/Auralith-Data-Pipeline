@@ -76,13 +76,22 @@ class HuggingFaceSource(DataSource):
             from datasets import load_dataset
 
             logger.info(f"Loading dataset: {self.path}")
-            self._dataset = load_dataset(
-                self.path,
-                self.dataset_name,
-                split=self.split,
-                streaming=self.streaming,
-                **self.kwargs,
-            )
+            try:
+                self._dataset = load_dataset(
+                    self.path,
+                    self.dataset_name,
+                    split=self.split,
+                    streaming=self.streaming,
+                    **self.kwargs,
+                )
+            except RuntimeError as e:
+                if "Dataset scripts are no longer supported" in str(e):
+                    logger.error(
+                        f"Dataset '{self.path}' uses deprecated Python scripts. "
+                        f"Please update to use the new dataset format. "
+                        f"Try using 'wikimedia/wikipedia' instead of 'wikipedia'."
+                    )
+                raise
         return self._dataset
 
     def __iter__(self) -> Iterator[DataSample]:
@@ -227,7 +236,7 @@ class JSONLSource(DataSource):
 # Registry of available datasets
 DATASET_REGISTRY = {
     "wikipedia": {
-        "path": "wikipedia",
+        "path": "wikimedia/wikipedia",
         "name": "20231101.en",
         "text_column": "text",
         "description": "English Wikipedia (20GB)",
@@ -255,7 +264,7 @@ DATASET_REGISTRY = {
         "description": "ArXiv papers (50GB)",
     },
     "openwebtext": {
-        "path": "openwebtext",
+        "path": "Skylion007/openwebtext",
         "text_column": "text",
         "description": "OpenWebText (40GB)",
     },
