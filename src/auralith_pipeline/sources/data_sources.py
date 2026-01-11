@@ -73,14 +73,15 @@ class HuggingFaceSource(DataSource):
     def _load_dataset(self):
         """Lazy load the dataset."""
         if self._dataset is None:
-            from datasets import load_dataset
             import time
 
+            from datasets import load_dataset
+
             logger.info(f"Loading dataset: {self.path}")
-            
+
             max_retries = 3
             retry_delay = 5
-            
+
             for attempt in range(max_retries):
                 try:
                     self._dataset = load_dataset(
@@ -93,7 +94,7 @@ class HuggingFaceSource(DataSource):
                     return self._dataset
                 except Exception as e:
                     error_msg = str(e).lower()
-                    
+
                     # Check for deprecated dataset scripts
                     if "dataset scripts are no longer supported" in error_msg:
                         logger.error(
@@ -101,9 +102,11 @@ class HuggingFaceSource(DataSource):
                             f"Try using 'wikimedia/wikipedia' instead of 'wikipedia'."
                         )
                         raise
-                    
+
                     # Retry on timeout errors
-                    if ("timeout" in error_msg or "timed out" in error_msg) and attempt < max_retries - 1:
+                    if (
+                        "timeout" in error_msg or "timed out" in error_msg
+                    ) and attempt < max_retries - 1:
                         logger.warning(
                             f"Timeout loading dataset (attempt {attempt + 1}/{max_retries}). "
                             f"Retrying in {retry_delay}s..."
@@ -111,12 +114,12 @@ class HuggingFaceSource(DataSource):
                         time.sleep(retry_delay)
                         retry_delay *= 2
                         continue
-                    
+
                     # Re-raise if not a timeout or last attempt
                     if attempt == max_retries - 1:
                         logger.error(f"Failed to load dataset after {max_retries} attempts: {e}")
                         raise
-                        
+
         return self._dataset
 
     def __iter__(self) -> Iterator[DataSample]:
