@@ -2,6 +2,7 @@
 
 from auralith_pipeline.sources.data_sources import (
     DATASET_REGISTRY,
+    DEPRECATED_DATASETS,
     DataSample,
     DataSource,
     HuggingFaceSource,
@@ -17,5 +18,6 @@ __all__ = [
     "LocalFileSource",
     "JSONLSource",
     "DATASET_REGISTRY",
+    "DEPRECATED_DATASETS",
     "create_source",
 ]

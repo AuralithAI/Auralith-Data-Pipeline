@@ -60,6 +60,12 @@ class HuggingFaceSource(DataSource):
         max_samples: int | None = None,
         **kwargs,
     ):
+        # Check if this is a deprecated dataset
+        from auralith_pipeline.sources.data_sources import DEPRECATED_DATASETS
+
+        if path in DEPRECATED_DATASETS:
+            raise ValueError(f"Dataset '{path}' is deprecated: {DEPRECATED_DATASETS[path]}")
+
         self.path = path
         self.dataset_name = name
         self.split = split
@@ -268,45 +274,59 @@ DATASET_REGISTRY = {
         "name": "20231101.en",
         "text_column": "text",
         "description": "English Wikipedia (20GB)",
-        "split": "train",  # Explicitly set split
-    },
-    "the_pile": {
-        "path": "EleutherAI/pile",
-        "text_column": "text",
-        "description": "The Pile - diverse text (800GB)",
-    },
-    "redpajama": {
-        "path": "togethercomputer/RedPajama-Data-1T",
-        "text_column": "text",
-        "description": "RedPajama - LLaMA data (1.2TB)",
+        "split": "train",
     },
     "c4": {
         "path": "allenai/c4",
         "name": "en",
         "text_column": "text",
-        "description": "C4 - Common Crawl (750GB)",
+        "description": "C4 - Common Crawl cleaned (750GB)",
+        "split": "train",
     },
-    "arxiv": {
-        "path": "scientific_papers",
-        "name": "arxiv",
-        "text_column": "article",
-        "description": "ArXiv papers (50GB)",
+    "redpajama": {
+        "path": "togethercomputer/RedPajama-Data-1T",
+        "text_column": "text",
+        "description": "RedPajama - LLaMA reproduction (1.2TB)",
+        "split": "train",
     },
     "openwebtext": {
         "path": "Skylion007/openwebtext",
         "text_column": "text",
-        "description": "OpenWebText (40GB)",
+        "description": "OpenWebText - Reddit links (40GB)",
+        "split": "train",
     },
-    "the_stack": {
-        "path": "bigcode/the-stack",
-        "text_column": "content",
-        "description": "Source code (3TB)",
+    "bookcorpus": {
+        "path": "bookcorpus",
+        "text_column": "text",
+        "description": "BookCorpus - 11k books (5GB)",
+        "split": "train",
+    },
+    "wikitext": {
+        "path": "wikitext",
+        "name": "wikitext-103-v1",
+        "text_column": "text",
+        "description": "Wikitext-103 - Wikipedia subset (500MB)",
+        "split": "train",
     },
     "dolly": {
         "path": "databricks/databricks-dolly-15k",
         "text_column": "response",
-        "description": "Dolly instructions (15MB)",
+        "description": "Dolly-15k - instruction following (15MB)",
+        "split": "train",
     },
+    "the_stack": {
+        "path": "bigcode/the-stack-dedup",
+        "name": "data",
+        "text_column": "content",
+        "description": "The Stack (deduplicated) - source code (3TB)",
+        "split": "train",
+    },
+}
+
+# Deprecated datasets (no longer accessible via new HuggingFace API)
+DEPRECATED_DATASETS = {
+    "the_pile": "Use 'redpajama' or 'c4' instead - The Pile uses deprecated scripts",
+    "arxiv": "Use 'scientific_papers' directly or search HuggingFace Hub for alternatives",
 }
 
 
@@ -317,8 +337,16 @@ def create_source(
     **kwargs,
 ) -> HuggingFaceSource:
     """Create a data source from the registry."""
+    # Check if the dataset is deprecated
+    if name in DEPRECATED_DATASETS:
+        raise ValueError(f"Dataset '{name}' is deprecated: {DEPRECATED_DATASETS[name]}")
+
     if name not in DATASET_REGISTRY:
-        raise ValueError(f"Unknown dataset: {name}. Available: {list(DATASET_REGISTRY.keys())}")
+        available = list(DATASET_REGISTRY.keys())
+        deprecated = list(DEPRECATED_DATASETS.keys())
+        raise ValueError(
+            f"Unknown dataset: {name}.\n" f"Available: {available}\n" f"Deprecated: {deprecated}"
+        )
 
     config = DATASET_REGISTRY[name].copy()
     config.pop("description", None)
