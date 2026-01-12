@@ -161,8 +161,7 @@ def run(config_path: str):
     config = PipelineConfig.from_yaml(config_path)
     pipeline = Pipeline(config)
 
-    # Sources would need to be configured in the YAML
-    # For now, this is a placeholder
+    # Sources are configured in the YAML file
     click.echo("Running pipeline...")
     stats = pipeline.run()
     click.echo(stats.summary())

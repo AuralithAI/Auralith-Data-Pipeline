@@ -1,9 +1,15 @@
-"""Tokenization module for text and multimodal content."""
+"""Tokenization module for text and multimodal content.
+
+This module provides a unified interface to the custom BPE tokenizer
+and multimodal tokenizers for images and audio.
+"""
 
 import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
+
+from auralith_pipeline.tokenization.bpe_tokenizer import BPETokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +28,15 @@ class TokenizedSample:
 
 
 class Tokenizer:
-    """Text tokenizer using SentencePiece or HuggingFace tokenizers."""
+    """Text tokenizer using custom BPE implementation.
+
+    This is a wrapper around BPETokenizer for backward compatibility.
+    """
 
     def __init__(
         self,
         tokenizer_path: str | None = None,
-        vocab_size: int = 50257,
+        vocab_size: int = 32000,
         max_length: int = 2048,
         add_special_tokens: bool = True,
         padding: bool = True,
@@ -40,8 +49,7 @@ class Tokenizer:
         self.padding = padding
         self.truncation = truncation
 
-        self._tokenizer = None
-        self._use_hf = False
+        self._tokenizer: BPETokenizer | None = None
 
     def _load_tokenizer(self):
         """Lazy load tokenizer."""
@@ -49,74 +57,52 @@ class Tokenizer:
             return
 
         if self.tokenizer_path:
-            # Try SentencePiece first
-            if self.tokenizer_path.endswith(".model"):
-                try:
-                    import sentencepiece as spm
-
-                    self._tokenizer = spm.SentencePieceProcessor()
-                    self._tokenizer.Load(self.tokenizer_path)
-                    self._use_hf = False
-                    logger.info(f"Loaded SentencePiece tokenizer from {self.tokenizer_path}")
-                    return
-                except Exception as e:
-                    logger.warning(f"Failed to load SentencePiece: {e}")
-
-            # Try HuggingFace tokenizer
+            # Try to load pre-trained tokenizer
             try:
-                from transformers import AutoTokenizer
-
-                self._tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_path)
-                self._use_hf = True
-                logger.info(f"Loaded HuggingFace tokenizer from {self.tokenizer_path}")
+                self._tokenizer = BPETokenizer.load(self.tokenizer_path)
+                logger.info(f"Loaded BPE tokenizer from {self.tokenizer_path}")
                 return
             except Exception as e:
-                logger.warning(f"Failed to load HuggingFace tokenizer: {e}")
+                logger.warning(f"Failed to load tokenizer from {self.tokenizer_path}: {e}")
 
-        # Default to GPT-2 tokenizer
-        try:
-            from transformers import AutoTokenizer
-
-            self._tokenizer = AutoTokenizer.from_pretrained("gpt2")
-            self._use_hf = True
-            logger.info("Using default GPT-2 tokenizer")
-        except ImportError:
-            logger.warning("transformers not installed, using basic tokenization")
-            self._tokenizer = None
+        # Create new tokenizer (needs training)
+        logger.warning(
+            "Creating new untrained tokenizer. "
+            "Please train it with train_tokenizer() before use."
+        )
+        self._tokenizer = BPETokenizer(vocab_size=self.vocab_size)
 
     def encode(self, text: str) -> list[int]:
         """Encode text to token ids."""
         self._load_tokenizer()
 
-        if self._tokenizer is None:
-            # Basic fallback tokenization
-            return [hash(word) % self.vocab_size for word in text.split()]
+        max_len = self.max_length if self.truncation else None
 
-        if self._use_hf:
-            return self._tokenizer.encode(
-                text,
-                add_special_tokens=self.add_special_tokens,
-                truncation=self.truncation,
-                max_length=self.max_length,
-            )
-        else:
-            # SentencePiece
-            ids = self._tokenizer.Encode(text)
-            if self.truncation and len(ids) > self.max_length:
-                ids = ids[: self.max_length]
-            return ids
+        return self._tokenizer.encode(
+            text,
+            add_special_tokens=self.add_special_tokens,
+            max_length=max_len,
+        )
 
     def decode(self, ids: list[int]) -> str:
         """Decode token ids to text."""
         self._load_tokenizer()
+        return self._tokenizer.decode(ids, skip_special_tokens=True)
 
-        if self._tokenizer is None:
-            return ""
+    def train(self, corpus: str, save_path: str | None = None) -> None:
+        """Train the BPE tokenizer on a corpus.
 
-        if self._use_hf:
-            return self._tokenizer.decode(ids, skip_special_tokens=True)
-        else:
-            return self._tokenizer.Decode(ids)
+        Args:
+            corpus: Text corpus to train on
+            save_path: Optional path to save trained tokenizer
+        """
+        self._load_tokenizer()
+        logger.info("Training BPE tokenizer...")
+        self._tokenizer.train(corpus, verbose=True)
+
+        if save_path:
+            self._tokenizer.save(save_path)
+            logger.info(f"Tokenizer saved to {save_path}")
 
     def tokenize(
         self,

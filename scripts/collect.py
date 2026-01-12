@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from auralith_pipeline import Pipeline, PipelineConfig
-from auralith_pipeline.sources import create_source, DATASET_REGISTRY
+from auralith_pipeline.sources import DATASET_REGISTRY, create_source
 from auralith_pipeline.utils import setup_logging
 
 
@@ -27,13 +27,15 @@ def main():
         help="Dataset to collect",
     )
     parser.add_argument(
-        "--max-samples", "-n",
+        "--max-samples",
+        "-n",
         type=int,
         default=10000,
         help="Maximum samples to collect",
     )
     parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         type=str,
         default="./data/shards",
         help="Output directory",
@@ -55,25 +57,26 @@ def main():
         help="Disable quality filtering",
     )
     parser.add_argument(
-        "--verbose", "-v",
+        "--verbose",
+        "-v",
         action="store_true",
         help="Verbose output",
     )
-    
+
     args = parser.parse_args()
-    
+
     # Setup logging
     setup_logging("DEBUG" if args.verbose else "INFO")
-    
+
     # Create config
     config = PipelineConfig.from_preset(args.preset)
     config.output_dir = args.output
     config.deduplicate = not args.no_dedup
     config.quality_filter = not args.no_quality_filter
-    
+
     # Create pipeline
     pipeline = Pipeline(config)
-    
+
     # Add source
     source = create_source(
         args.dataset,
@@ -81,13 +84,13 @@ def main():
         max_samples=args.max_samples,
     )
     pipeline.add_source(source)
-    
+
     # Run
     print(f"\nCollecting {args.dataset} (max {args.max_samples:,} samples)")
     print(f"Output: {args.output}\n")
-    
+
     stats = pipeline.run(max_samples=args.max_samples)
-    
+
     print(stats.summary())
 
 
