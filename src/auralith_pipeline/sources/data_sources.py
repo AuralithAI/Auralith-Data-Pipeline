@@ -321,18 +321,18 @@ DATASET_REGISTRY = {
         "description": "The Pile (uncopyrighted subset) - diverse text corpus (825GB)",
         "split": "train",
     },
-    "scientific_papers": {
-        "path": "scientific_papers",
+    "arxiv": {
+        "path": "togethercomputer/RedPajama-Data-1T",
         "name": "arxiv",
-        "text_column": "article",
-        "description": "Scientific Papers (arXiv) - research papers (4.9GB)",
+        "text_column": "text",
+        "description": "arXiv papers from RedPajama dataset (28GB)",
         "split": "train",
     },
-    "arxiv": {
-        "path": "scientific_papers",
+    "scientific_papers": {
+        "path": "togethercomputer/RedPajama-Data-1T",
         "name": "arxiv",
-        "text_column": "article",
-        "description": "arXiv - scientific papers from arXiv.org (4.9GB)",
+        "text_column": "text",
+        "description": "Scientific papers (arXiv) from RedPajama (28GB)",
         "split": "train",
     },
 }
