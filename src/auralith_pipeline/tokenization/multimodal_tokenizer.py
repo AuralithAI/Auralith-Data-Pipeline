@@ -13,7 +13,6 @@ from typing import Any
 import numpy as np
 import soundfile as sf
 from PIL import Image
-from scipy import ndimage
 from scipy.signal import resample
 
 logger = logging.getLogger(__name__)
