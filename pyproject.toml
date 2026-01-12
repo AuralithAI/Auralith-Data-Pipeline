@@ -36,6 +36,7 @@ requires-python = ">=3.10"
 
 dependencies = [
     "numpy>=1.24.0",
+    "scipy>=1.11.0",
     "tqdm>=4.65.0",
     "pyyaml>=6.0",
     "requests>=2.31.0",
@@ -49,6 +50,8 @@ dependencies = [
     "langdetect>=1.0.9",
     "rich>=13.0.0",
     "click>=8.1.0",
+    "Pillow>=10.0.0",
+    "soundfile>=0.12.0",
 ]
 
 [project.optional-dependencies]
@@ -65,9 +68,8 @@ cloud = [
     "google-cloud-storage>=2.10.0",
     "azure-storage-blob>=12.19.0",
 ]
-# Multimodal AI (images, audio, video) - WARNING: Large dependencies (~2-3 GB with PyTorch)
+# Multimodal AI (advanced features: video, ML models) - WARNING: Large dependencies (~2-3 GB with PyTorch)
 multimodal = [
-    "Pillow>=10.0.0",
     "librosa>=0.10.0",
     "opencv-python>=4.8.0",
     "timm>=0.9.0",  # Includes PyTorch - very large!
