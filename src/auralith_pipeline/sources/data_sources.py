@@ -60,12 +60,6 @@ class HuggingFaceSource(DataSource):
         max_samples: int | None = None,
         **kwargs,
     ):
-        # Check if this is a deprecated dataset
-        from auralith_pipeline.sources.data_sources import DEPRECATED_DATASETS
-
-        if path in DEPRECATED_DATASETS:
-            raise ValueError(f"Dataset '{path}' is deprecated: {DEPRECATED_DATASETS[path]}")
-
         self.path = path
         self.dataset_name = name
         self.split = split
@@ -321,11 +315,16 @@ DATASET_REGISTRY = {
         "description": "The Stack (deduplicated) - source code (3TB)",
         "split": "train",
     },
+    "the_pile": {
+        "path": "monology/pile-uncopyrighted",
+        "text_column": "text",
+        "description": "The Pile (uncopyrighted subset) - diverse text corpus (825GB)",
+        "split": "train",
+    },
 }
 
 # Deprecated datasets (no longer accessible via new HuggingFace API)
 DEPRECATED_DATASETS = {
-    "the_pile": "Use 'redpajama' or 'c4' instead - The Pile uses deprecated scripts",
     "arxiv": "Use 'scientific_papers' directly or search HuggingFace Hub for alternatives",
 }
 

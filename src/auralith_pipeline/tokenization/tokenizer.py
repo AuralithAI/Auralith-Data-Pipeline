@@ -63,13 +63,9 @@ class Tokenizer:
                 logger.info(f"Loaded BPE tokenizer from {self.tokenizer_path}")
                 return
             except Exception as e:
-                logger.warning(f"Failed to load tokenizer from {self.tokenizer_path}: {e}")
+                logger.debug(f"Failed to load tokenizer from {self.tokenizer_path}: {e}")
 
         # Create new tokenizer (needs training)
-        logger.warning(
-            "Creating new untrained tokenizer. "
-            "Please train it with train_tokenizer() before use."
-        )
         self._tokenizer = BPETokenizer(vocab_size=self.vocab_size)
 
     def encode(self, text: str) -> list[int]:

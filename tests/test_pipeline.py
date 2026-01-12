@@ -55,13 +55,12 @@ class TestDataSources:
         assert "wikipedia" in DATASET_REGISTRY
         assert "c4" in DATASET_REGISTRY
         assert "redpajama" in DATASET_REGISTRY
+        assert "the_pile" in DATASET_REGISTRY
 
         # Test that deprecated datasets are not in registry
-        assert "the_pile" not in DATASET_REGISTRY
         assert "arxiv" not in DATASET_REGISTRY
 
         # Test that deprecated datasets are tracked
-        assert "the_pile" in DEPRECATED_DATASETS
         assert "arxiv" in DEPRECATED_DATASETS
 
 
