@@ -322,17 +322,15 @@ DATASET_REGISTRY = {
         "split": "train",
     },
     "arxiv": {
-        "path": "togethercomputer/RedPajama-Data-1T",
-        "name": "arxiv",
+        "path": "EleutherAI/proof-pile-2",
         "text_column": "text",
-        "description": "arXiv papers from RedPajama dataset (28GB)",
+        "description": "ProofPile-2 dataset including arXiv papers (55B tokens)",
         "split": "train",
     },
     "scientific_papers": {
-        "path": "togethercomputer/RedPajama-Data-1T",
-        "name": "arxiv",
+        "path": "EleutherAI/proof-pile-2",
         "text_column": "text",
-        "description": "Scientific papers (arXiv) from RedPajama (28GB)",
+        "description": "Scientific and mathematical texts from ProofPile-2 (55B tokens)",
         "split": "train",
     },
 }
