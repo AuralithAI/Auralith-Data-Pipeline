@@ -1,7 +1,7 @@
 name: Data Processing Pipeline
 
 on:
-  # Run weekly on Sundays at 2 AM UTC
+  # Run weekly on Sundays at 2 AM UTC (can be disabled via repository variable)
   schedule:
     - cron: '0 2 * * 0'
   
@@ -27,11 +27,37 @@ env:
   PYTHON_VERSION: '3.11'
   S3_BUCKET: ${{ secrets.S3_BUCKET }}
   AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+  # Set ENABLE_CRON=false in repository variables to disable scheduled runs
+  ENABLE_CRON: ${{ vars.ENABLE_CRON || 'true' }}
 
 jobs:
+  check-should-run:
+    name: Check if workflow should run
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - name: Check if scheduled run is enabled
+        id: check
+        run: |
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            if [[ "${{ env.ENABLE_CRON }}" == "false" ]]; then
+              echo "Scheduled run is disabled via ENABLE_CRON variable"
+              echo "should_run=false" >> $GITHUB_OUTPUT
+            else
+              echo "Scheduled run is enabled"
+              echo "should_run=true" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "Manual trigger - always run"
+            echo "should_run=true" >> $GITHUB_OUTPUT
+          fi
+
   process-data:
     name: Process Dataset
     runs-on: ubuntu-latest
+    needs: check-should-run
+    if: needs.check-should-run.outputs.should_run == 'true'
     timeout-minutes: 360  # 6 hours max
     
     steps:
@@ -163,7 +189,8 @@ jobs:
   process-spark-large-scale:
     name: Process with Spark (Large Datasets)
     runs-on: ubuntu-latest
-    if: github.event.inputs.dataset == 'all' && github.event_name == 'workflow_dispatch'
+    needs: check-should-run
+    if: needs.check-should-run.outputs.should_run == 'true' && github.event.inputs.dataset == 'all' && github.event_name == 'workflow_dispatch'
     timeout-minutes: 720  # 12 hours for large jobs
     
     steps:

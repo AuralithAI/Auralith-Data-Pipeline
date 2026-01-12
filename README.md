@@ -196,19 +196,44 @@ export AWS_DEFAULT_REGION=us-east-1
 
 ## GitHub Actions Pipeline
 
-Automated data processing runs weekly (Sunday 2 AM UTC):
+Automated data processing with flexible scheduling:
 
-1. Collect data from configured datasets
-2. Apply preprocessing and quality filters
-3. Generate SafeTensors shards
-4. Upload to S3 storage
+### Scheduled Runs (Optional)
+- Default: Runs weekly on Sundays at 2 AM UTC
+- Can be enabled/disabled via repository variable
 
-**Setup**: Add secrets to repository settings:
-- `AWS_ACCESS_KEY_ID`
-- `AWS_SECRET_ACCESS_KEY`
-- `AWS_S3_BUCKET`
+### Setup
 
-**Manual trigger**: Go to Actions tab and click "Run workflow"
+1. **Add required secrets** (Settings → Secrets → Actions):
+   - `AWS_ACCESS_KEY_ID` - Your AWS access key
+   - `AWS_SECRET_ACCESS_KEY` - Your AWS secret key
+   - `S3_BUCKET` - S3 bucket name for storing data
+
+2. **Configure scheduled runs** (Optional, Settings → Variables → Actions):
+   - Create variable: `ENABLE_CRON`
+   - Set value: `true` (enable scheduled runs) or `false` (disable)
+   - Default: `true` (enabled)
+
+### Running the Pipeline
+
+**Manual trigger**: 
+1. Go to Actions tab
+2. Select "Data Processing Pipeline"
+3. Click "Run workflow"
+4. Choose dataset and parameters
+
+**Scheduled runs**:
+- Automatically processes Wikipedia dataset weekly
+- To disable: Set `ENABLE_CRON` variable to `false`
+- To enable: Set `ENABLE_CRON` variable to `true` or delete the variable
+
+### What It Does
+
+1. Collects data from configured datasets
+2. Applies preprocessing and quality filters
+3. Generates SafeTensors shards
+4. Uploads to S3 storage with intelligent tiering
+5. Creates processing reports
 
 ## Development
 

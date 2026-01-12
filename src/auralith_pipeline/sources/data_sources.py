@@ -321,12 +321,24 @@ DATASET_REGISTRY = {
         "description": "The Pile (uncopyrighted subset) - diverse text corpus (825GB)",
         "split": "train",
     },
+    "scientific_papers": {
+        "path": "scientific_papers",
+        "name": "arxiv",
+        "text_column": "article",
+        "description": "Scientific Papers (arXiv) - research papers (4.9GB)",
+        "split": "train",
+    },
+    "arxiv": {
+        "path": "scientific_papers",
+        "name": "arxiv",
+        "text_column": "article",
+        "description": "arXiv - scientific papers from arXiv.org (4.9GB)",
+        "split": "train",
+    },
 }
 
 # Deprecated datasets (no longer accessible via new HuggingFace API)
-DEPRECATED_DATASETS = {
-    "arxiv": "Use 'scientific_papers' directly or search HuggingFace Hub for alternatives",
-}
+DEPRECATED_DATASETS: dict[str, str] = {}
 
 
 def create_source(

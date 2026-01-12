@@ -56,12 +56,11 @@ class TestDataSources:
         assert "c4" in DATASET_REGISTRY
         assert "redpajama" in DATASET_REGISTRY
         assert "the_pile" in DATASET_REGISTRY
+        assert "arxiv" in DATASET_REGISTRY
+        assert "scientific_papers" in DATASET_REGISTRY
 
-        # Test that deprecated datasets are not in registry
-        assert "arxiv" not in DATASET_REGISTRY
-
-        # Test that deprecated datasets are tracked
-        assert "arxiv" in DEPRECATED_DATASETS
+        # Test that deprecated datasets dict exists (even if empty)
+        assert isinstance(DEPRECATED_DATASETS, dict)
 
 
 class TestPreprocessing:
