@@ -16,6 +16,7 @@ on:
           - wikipedia
           - the_pile
           - c4
+          - redpajama
           - arxiv
           - all
       max_samples:
@@ -162,6 +163,24 @@ jobs:
         if: success() && (github.event.inputs.dataset == 'arxiv' || github.event.inputs.dataset == 'all')
         run: |
           aws s3 sync ./data/shards/arxiv s3://$S3_BUCKET/datasets/arxiv/ \
+            --storage-class INTELLIGENT_TIERING
+
+      - name: Process RedPajama Dataset
+        if: github.event.inputs.dataset == 'redpajama' || github.event.inputs.dataset == 'all'
+        run: |
+          auralith-pipeline collect \
+            --dataset redpajama \
+            --output ./data/shards/redpajama \
+            --max-samples ${{ github.event.inputs.max_samples || '50000' }} \
+            --streaming \
+            --deduplicate \
+            --quality-filter \
+            --preset production
+
+      - name: Upload RedPajama to S3
+        if: success() && (github.event.inputs.dataset == 'redpajama' || github.event.inputs.dataset == 'all')
+        run: |
+          aws s3 sync ./data/shards/redpajama s3://$S3_BUCKET/datasets/redpajama/ \
             --storage-class INTELLIGENT_TIERING
 
       - name: Generate processing report

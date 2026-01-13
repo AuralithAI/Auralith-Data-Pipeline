@@ -322,21 +322,17 @@ DATASET_REGISTRY = {
         "split": "train",
     },
     "arxiv": {
-        "path": "EleutherAI/proof-pile-2",
-        "text_column": "text",
-        "description": "ProofPile-2 dataset including arXiv papers (55B tokens)",
-        "split": "train",
-    },
-    "scientific_papers": {
-        "path": "EleutherAI/proof-pile-2",
-        "text_column": "text",
-        "description": "Scientific and mathematical texts from ProofPile-2 (55B tokens)",
+        "path": "CShorten/ML-ArXiv-Papers",
+        "text_column": "abstract",
+        "description": "ML ArXiv Papers - machine learning papers from arXiv (117k papers)",
         "split": "train",
     },
 }
 
 # Deprecated datasets (no longer accessible via new HuggingFace API)
-DEPRECATED_DATASETS: dict[str, str] = {}
+DEPRECATED_DATASETS: dict[str, str] = {
+    "scientific_papers": "Uses deprecated scripts - use 'arxiv' instead",
+}
 
 
 def create_source(
