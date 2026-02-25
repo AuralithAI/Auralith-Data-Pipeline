@@ -16,7 +16,6 @@ from auralith_pipeline.security.privacy_config import (
     PrivacyPolicy,
 )
 
-
 # ════════════════════════════════════════════════════════════════
 #  PIIScrubber tests
 # ════════════════════════════════════════════════════════════════

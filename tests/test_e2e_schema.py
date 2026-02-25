@@ -19,7 +19,6 @@ import pytest
 from auralith_pipeline.config.pipeline_config import PipelineConfig
 from auralith_pipeline.sources.data_sources import DataSample
 
-
 # ===========================================================================
 # Tensor Schema Tests
 # ===========================================================================
@@ -411,8 +410,7 @@ class TestPipelineConfigV2:
     def test_config_from_yaml(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             yaml_path = Path(tmpdir) / "test.yaml"
-            yaml_path.write_text(
-                """
+            yaml_path.write_text("""
 pipeline:
   name: yaml-test
   output_dir: ./test-output
@@ -439,8 +437,7 @@ video:
   enabled: true
   max_frames: 16
   resize: [112, 112]
-"""
-            )
+""")
             config = PipelineConfig.from_yaml(str(yaml_path))
             assert config.name == "yaml-test"
             assert config.tracking.enabled is True
