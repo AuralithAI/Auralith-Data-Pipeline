@@ -34,18 +34,18 @@ class BPETokenizer:
         "<bos>": 2,  # Beginning of sequence
         "<eos>": 3,  # End of sequence
         # Multimodal special tokens — RT-DLM controller reads these
-        "<IMG>": 4,       # Image region start
-        "<IMG_END>": 5,   # Image region end
-        "<AUDIO>": 6,     # Audio region start
-        "<AUDIO_END>": 7, # Audio region end
-        "<VIDEO>": 8,     # Video region start
-        "<VIDEO_END>": 9, # Video region end
-        "<FUSE>": 10,     # Cross-modal fusion marker
-        "<SEP>": 11,      # Segment separator
-        "<MASK>": 12,     # Masked token (for MLM-style objectives)
-        "<CODE>": 13,     # Code region start
-        "<CODE_END>": 14, # Code region end
-        "<THINK>": 15,    # Chain-of-thought marker
+        "<IMG>": 4,  # Image region start
+        "<IMG_END>": 5,  # Image region end
+        "<AUDIO>": 6,  # Audio region start
+        "<AUDIO_END>": 7,  # Audio region end
+        "<VIDEO>": 8,  # Video region start
+        "<VIDEO_END>": 9,  # Video region end
+        "<FUSE>": 10,  # Cross-modal fusion marker
+        "<SEP>": 11,  # Segment separator
+        "<MASK>": 12,  # Masked token (for MLM-style objectives)
+        "<CODE>": 13,  # Code region start
+        "<CODE_END>": 14,  # Code region end
+        "<THINK>": 15,  # Chain-of-thought marker
     }
 
     # Backward-compat aliases for old names

@@ -35,20 +35,20 @@ class PIICategory(str, Enum):
     GPS_COORDINATES = "gps_coordinates"
 
     # ── Government IDs (per country) ──
-    SSN = "ssn"                           # US Social Security Number
-    NHS_NUMBER = "nhs_number"             # UK National Health Service
-    NIR = "nir"                           # France — numéro INSEE
-    AADHAAR = "aadhaar"                   # India
-    CPF = "cpf"                           # Brazil — Cadastro de Pessoas Físicas
-    SIN = "sin"                           # Canada — Social Insurance Number
-    TFN = "tfn"                           # Australia — Tax File Number
-    BSN = "bsn"                           # Netherlands — Burgerservicenummer
-    NRIC = "nric"                         # Singapore / Malaysia
-    MY_NUMBER = "my_number"               # Japan — マイナンバー
-    CURP = "curp"                         # Mexico
-    DNI = "dni"                           # Spain / Argentina
-    PESEL = "pesel"                       # Poland
-    NATIONAL_ID_GENERIC = "national_id"   # Catch-all
+    SSN = "ssn"  # US Social Security Number
+    NHS_NUMBER = "nhs_number"  # UK National Health Service
+    NIR = "nir"  # France — numéro INSEE
+    AADHAAR = "aadhaar"  # India
+    CPF = "cpf"  # Brazil — Cadastro de Pessoas Físicas
+    SIN = "sin"  # Canada — Social Insurance Number
+    TFN = "tfn"  # Australia — Tax File Number
+    BSN = "bsn"  # Netherlands — Burgerservicenummer
+    NRIC = "nric"  # Singapore / Malaysia
+    MY_NUMBER = "my_number"  # Japan — マイナンバー
+    CURP = "curp"  # Mexico
+    DNI = "dni"  # Spain / Argentina
+    PESEL = "pesel"  # Poland
+    NATIONAL_ID_GENERIC = "national_id"  # Catch-all
 
     # ── Financial ──
     CREDIT_CARD = "credit_card"
@@ -187,9 +187,7 @@ class PrivacyConfig:
 
     enabled: bool = True
     mode: Literal["strict", "jurisdiction"] = "strict"
-    policies: list[PrivacyPolicy] = field(
-        default_factory=lambda: [GLOBAL_STRICT_POLICY]
-    )
+    policies: list[PrivacyPolicy] = field(default_factory=lambda: [GLOBAL_STRICT_POLICY])
     replacement_style: Literal["tag", "hash", "remove"] = "tag"
     rescan_after_processing: bool = True
     log_redactions: bool = True

@@ -68,9 +68,7 @@ class EmbeddingDeduplicator:
 
             self._model = SentenceTransformer(self.model_name, device=self.device)
             self._dim = self._model.get_sentence_embedding_dimension()
-            logger.info(
-                f"Loaded embedding model {self.model_name} (dim={self._dim})"
-            )
+            logger.info(f"Loaded embedding model {self.model_name} (dim={self._dim})")
         except ImportError:
             logger.warning(
                 "sentence-transformers not installed — embedding dedup disabled. "

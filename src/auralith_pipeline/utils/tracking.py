@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 # Lineage record
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class SampleLineage:
     """Full provenance record for a single sample."""
@@ -80,7 +81,9 @@ class LineageTracker:
 
     def save(self, path: str | None = None) -> None:
         """Save lineage records to JSONL."""
-        output = Path(path) if path else (self.output_dir / "lineage.jsonl" if self.output_dir else None)
+        output = (
+            Path(path) if path else (self.output_dir / "lineage.jsonl" if self.output_dir else None)
+        )
         if output is None:
             logger.warning("No output path for lineage — skipping save")
             return
@@ -112,6 +115,7 @@ class LineageTracker:
 # ---------------------------------------------------------------------------
 # Experiment tracker (MLflow / W&B)
 # ---------------------------------------------------------------------------
+
 
 class ExperimentTracker:
     """Unified experiment tracking for pipeline runs.
@@ -186,9 +190,11 @@ class ExperimentTracker:
         """Log pipeline parameters."""
         if self.backend == "mlflow":
             import mlflow
+
             mlflow.log_params({k: str(v) for k, v in params.items()})
         elif self.backend == "wandb":
             import wandb
+
             wandb.config.update(params)
         else:
             self._local_log.append({"type": "params", "data": params})
@@ -197,9 +203,11 @@ class ExperimentTracker:
         """Log pipeline metrics."""
         if self.backend == "mlflow":
             import mlflow
+
             mlflow.log_metrics(metrics, step=step)
         elif self.backend == "wandb":
             import wandb
+
             wandb.log(metrics, step=step)
         else:
             self._local_log.append({"type": "metrics", "step": step, "data": metrics})
@@ -208,9 +216,11 @@ class ExperimentTracker:
         """Log a file/directory as an artifact."""
         if self.backend == "mlflow":
             import mlflow
+
             mlflow.log_artifact(path)
         elif self.backend == "wandb":
             import wandb
+
             artifact = wandb.Artifact(name=artifact_type, type=artifact_type)
             if Path(path).is_dir():
                 artifact.add_dir(path)
@@ -227,9 +237,11 @@ class ExperimentTracker:
 
         if self.backend == "mlflow":
             import mlflow
+
             mlflow.end_run(status="FINISHED" if status == "success" else "FAILED")
         elif self.backend == "wandb":
             import wandb
+
             wandb.finish(exit_code=0 if status == "success" else 1)
         else:
             logger.info(f"Local run complete: {status} ({elapsed:.1f}s)")
@@ -245,6 +257,7 @@ class ExperimentTracker:
 # ---------------------------------------------------------------------------
 # Auto Data Card generator
 # ---------------------------------------------------------------------------
+
 
 class DataCardGenerator:
     """Generate HuggingFace-style Data Cards for processed datasets."""
@@ -379,4 +392,5 @@ Apache 2.0 — see [LICENSE](LICENSE)
 
     def _format_config(self, config: dict[str, Any]) -> str:
         import yaml
+
         return yaml.dump(config, default_flow_style=False)

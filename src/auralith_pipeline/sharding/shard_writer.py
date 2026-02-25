@@ -136,7 +136,10 @@ class ShardWriter:
         input_ids = np.array([s.input_ids for s in self._current_samples], dtype=np.int32)
         attention_mask = np.array([s.attention_mask for s in self._current_samples], dtype=np.int32)
         modality_mask = np.array(
-            [s.modality_mask if s.modality_mask else [0] * len(s.input_ids) for s in self._current_samples],
+            [
+                s.modality_mask if s.modality_mask else [0] * len(s.input_ids)
+                for s in self._current_samples
+            ],
             dtype=np.uint8,
         )
         labels = np.array(

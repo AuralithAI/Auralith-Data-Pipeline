@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 # Scorer interface
 # ---------------------------------------------------------------------------
 
+
 class QualityScorer(ABC):
     """Base class for quality scorers."""
 
@@ -36,6 +37,7 @@ class QualityScorer(ABC):
 # ---------------------------------------------------------------------------
 # Perplexity filter
 # ---------------------------------------------------------------------------
+
 
 class PerplexityFilter(QualityScorer):
     """Compute perplexity using a small causal LM.
@@ -124,6 +126,7 @@ class PerplexityFilter(QualityScorer):
 # ---------------------------------------------------------------------------
 # LLM-as-Judge
 # ---------------------------------------------------------------------------
+
 
 class LLMJudge(QualityScorer):
     """Use an LLM to judge sample quality.
@@ -256,15 +259,28 @@ class LLMJudge(QualityScorer):
 
         # Toxicity heuristic: presence of common toxic patterns
         toxic_patterns = [
-            "kill", "hate", "die", "stupid", "idiot", "racist",
+            "kill",
+            "hate",
+            "die",
+            "stupid",
+            "idiot",
+            "racist",
         ]
         toxic_count = sum(1 for w in words if w.lower() in toxic_patterns)
         toxicity = min(1.0, toxic_count / max(word_count, 1) * 50)
 
         # Educational value: presence of informative markers
         edu_markers = [
-            "research", "study", "analysis", "theorem", "equation",
-            "algorithm", "method", "result", "conclusion", "hypothesis",
+            "research",
+            "study",
+            "analysis",
+            "theorem",
+            "equation",
+            "algorithm",
+            "method",
+            "result",
+            "conclusion",
+            "hypothesis",
         ]
         edu_count = sum(1 for w in words if w.lower() in edu_markers)
         educational_value = min(1.0, edu_count / max(word_count, 1) * 20)
@@ -287,6 +303,7 @@ class LLMJudge(QualityScorer):
 # ---------------------------------------------------------------------------
 # Combined quality pipeline
 # ---------------------------------------------------------------------------
+
 
 class AdvancedQualityPipeline:
     """Combine perplexity + LLM judge into a single quality gate.

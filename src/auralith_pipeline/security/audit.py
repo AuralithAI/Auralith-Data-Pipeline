@@ -22,12 +22,12 @@ class PrivacyAuditEntry:
     """A single privacy audit event."""
 
     timestamp: float
-    event_type: str           # 'pii_redaction', 'secret_redaction', 'sample_blocked', etc.
+    event_type: str  # 'pii_redaction', 'secret_redaction', 'sample_blocked', etc.
     sample_id: str
     source: str
-    categories: list[str]     # PII categories found
+    categories: list[str]  # PII categories found
     redaction_count: int
-    action: str               # 'redacted', 'blocked', 'passed'
+    action: str  # 'redacted', 'blocked', 'passed'
     details: dict[str, Any] = field(default_factory=dict)
 
 
@@ -82,16 +82,18 @@ class PrivacyAuditLogger:
 
     def _write_entry(self, entry: PrivacyAuditEntry) -> None:
         """Serialize and buffer an entry."""
-        line = json.dumps({
-            "timestamp": entry.timestamp,
-            "event_type": entry.event_type,
-            "sample_id": entry.sample_id,
-            "source": entry.source,
-            "categories": entry.categories,
-            "redaction_count": entry.redaction_count,
-            "action": entry.action,
-            "details": entry.details,
-        })
+        line = json.dumps(
+            {
+                "timestamp": entry.timestamp,
+                "event_type": entry.event_type,
+                "sample_id": entry.sample_id,
+                "source": entry.source,
+                "categories": entry.categories,
+                "redaction_count": entry.redaction_count,
+                "action": entry.action,
+                "details": entry.details,
+            }
+        )
 
         self._buffer.append(line)
 

@@ -49,7 +49,24 @@ class TestSafeTensorsSchema:
                     attention_mask=[1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
                     metadata={"source": "test"},
                     modality_mask=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                    labels=[1, 2, 3, 4, 5, -100, -100, -100, -100, -100, -100, -100, -100, -100, -100, -100],
+                    labels=[
+                        1,
+                        2,
+                        3,
+                        4,
+                        5,
+                        -100,
+                        -100,
+                        -100,
+                        -100,
+                        -100,
+                        -100,
+                        -100,
+                        -100,
+                        -100,
+                        -100,
+                        -100,
+                    ],
                 )
                 writer.add_sample(sample)
 
@@ -278,7 +295,10 @@ class TestTracking:
                 output_path=str(Path(tmpdir) / "README.md"),
                 config={"name": "test-dataset"},
                 stats={"total_samples": 1000, "total_tokens": 50000, "num_shards": 5},
-                lineage_summary={"sources": {"wiki": 800, "code": 200}, "modalities": {"text": 1000}},
+                lineage_summary={
+                    "sources": {"wiki": 800, "code": 200},
+                    "modalities": {"text": 1000},
+                },
             )
             assert "test-dataset" in card
             assert Path(tmpdir, "README.md").exists()
@@ -391,7 +411,8 @@ class TestPipelineConfigV2:
     def test_config_from_yaml(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             yaml_path = Path(tmpdir) / "test.yaml"
-            yaml_path.write_text("""
+            yaml_path.write_text(
+                """
 pipeline:
   name: yaml-test
   output_dir: ./test-output
@@ -418,7 +439,8 @@ video:
   enabled: true
   max_frames: 16
   resize: [112, 112]
-""")
+"""
+            )
             config = PipelineConfig.from_yaml(str(yaml_path))
             assert config.name == "yaml-test"
             assert config.tracking.enabled is True

@@ -717,9 +717,7 @@ class MultimodalTokenizer:
                 )
                 # Build mask: start marker=image, image tokens=image, end marker=image
                 img_mask = [self.MODALITY_IMAGE] * (len(image_tokens) + 1)  # +1 for end marker
-                modality_mask = (
-                    modality_mask[: idx + 1] + img_mask + modality_mask[idx + 1 :]
-                )
+                modality_mask = modality_mask[: idx + 1] + img_mask + modality_mask[idx + 1 :]
                 # Mark the start marker as image too
                 modality_mask[idx] = self.MODALITY_IMAGE
 
@@ -741,9 +739,7 @@ class MultimodalTokenizer:
                     text_tokens[: idx + 1] + audio_tokens + [aud_end_id] + text_tokens[idx + 1 :]
                 )
                 aud_mask = [self.MODALITY_AUDIO] * (len(audio_tokens) + 1)
-                modality_mask = (
-                    modality_mask[: idx + 1] + aud_mask + modality_mask[idx + 1 :]
-                )
+                modality_mask = modality_mask[: idx + 1] + aud_mask + modality_mask[idx + 1 :]
                 modality_mask[idx] = self.MODALITY_AUDIO
 
         # --- Video insertion ---
@@ -764,9 +760,7 @@ class MultimodalTokenizer:
                     text_tokens[: idx + 1] + video_tokens + [vid_end_id] + text_tokens[idx + 1 :]
                 )
                 vid_mask = [self.MODALITY_VIDEO] * (len(video_tokens) + 1)
-                modality_mask = (
-                    modality_mask[: idx + 1] + vid_mask + modality_mask[idx + 1 :]
-                )
+                modality_mask = modality_mask[: idx + 1] + vid_mask + modality_mask[idx + 1 :]
                 modality_mask[idx] = self.MODALITY_VIDEO
 
         # Truncate to max length

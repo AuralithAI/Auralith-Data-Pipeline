@@ -152,16 +152,24 @@ class Pipeline:
             from auralith_pipeline.preprocessing.quality import AdvancedQualityPipeline
 
             aq_cfg = self.config.advanced_quality
-            perplexity_config = {
-                "model_name": aq_cfg.perplexity_model,
-                "max_perplexity": aq_cfg.max_perplexity,
-                "min_perplexity": aq_cfg.min_perplexity,
-            } if aq_cfg.perplexity_filter else None
+            perplexity_config = (
+                {
+                    "model_name": aq_cfg.perplexity_model,
+                    "max_perplexity": aq_cfg.max_perplexity,
+                    "min_perplexity": aq_cfg.min_perplexity,
+                }
+                if aq_cfg.perplexity_filter
+                else None
+            )
 
-            llm_judge_config = {
-                "provider": aq_cfg.llm_judge_provider,
-                "model_name": aq_cfg.llm_judge_model,
-            } if aq_cfg.llm_judge else None
+            llm_judge_config = (
+                {
+                    "provider": aq_cfg.llm_judge_provider,
+                    "model_name": aq_cfg.llm_judge_model,
+                }
+                if aq_cfg.llm_judge
+                else None
+            )
 
             self._advanced_quality = AdvancedQualityPipeline(
                 enable_perplexity=aq_cfg.perplexity_filter,

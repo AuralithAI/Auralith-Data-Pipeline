@@ -15,6 +15,7 @@ def _check_ray() -> bool:
     """Check if Ray is available."""
     try:
         import ray
+
         return True
     except ImportError:
         return False
@@ -56,9 +57,7 @@ class RayPipelineRunner:
     def connect(self) -> None:
         """Connect to (or start) the Ray cluster."""
         if not _check_ray():
-            raise ImportError(
-                "Ray is not installed. Install with: pip install 'ray[default]'"
-            )
+            raise ImportError("Ray is not installed. Install with: pip install 'ray[default]'")
 
         import ray
 
@@ -70,9 +69,7 @@ class RayPipelineRunner:
                 runtime_env=self.runtime_env,
                 ignore_reinit_error=True,
             )
-            logger.info(
-                f"Ray connected: {ray.cluster_resources()}"
-            )
+            logger.info(f"Ray connected: {ray.cluster_resources()}")
 
         self._connected = True
 
@@ -123,8 +120,7 @@ class RayPipelineRunner:
         start = time.time()
         config_dict = config.to_dict()
         futures = [
-            process_dataset.remote(ds, config_dict, max_samples_per_dataset)
-            for ds in datasets
+            process_dataset.remote(ds, config_dict, max_samples_per_dataset) for ds in datasets
         ]
 
         # Gather results
@@ -151,6 +147,7 @@ class RayPipelineRunner:
         """Shutdown Ray connection."""
         if _check_ray():
             import ray
+
             if ray.is_initialized():
                 ray.shutdown()
                 logger.info("Ray shutdown complete")

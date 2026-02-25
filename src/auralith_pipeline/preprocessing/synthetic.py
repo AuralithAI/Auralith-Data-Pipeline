@@ -73,9 +73,7 @@ class LocalDataAugmenter:
                     self.stats["augmented_samples"] += 1
                     yield augmented
 
-    def _apply_strategy(
-        self, sample: DataSample, strategy: str
-    ) -> DataSample | None:
+    def _apply_strategy(self, sample: DataSample, strategy: str) -> DataSample | None:
         """Apply a single augmentation strategy."""
         if strategy == "sentence_shuffle":
             return self._sentence_shuffle(sample)

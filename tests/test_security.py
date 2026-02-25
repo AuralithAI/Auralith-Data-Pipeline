@@ -229,9 +229,7 @@ class TestDataSanitizer:
         assert "[INTERNAL_URL]" in result.cleaned_text
 
     def test_sanitize_slack_webhook(self) -> None:
-        result = self.sanitizer.sanitize(
-            "Hook: https://hooks.slack.com/services/T00/B00/xxxx"
-        )
+        result = self.sanitizer.sanitize("Hook: https://hooks.slack.com/services/T00/B00/xxxx")
         assert "hooks.slack.com" not in result.cleaned_text
 
     def test_clean_text_passes(self) -> None:
