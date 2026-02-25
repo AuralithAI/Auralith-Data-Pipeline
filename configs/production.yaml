@@ -1,5 +1,6 @@
-# Example production configuration for Auralith Data Pipeline
-# Copy this file and modify as needed
+# Auralith Data Pipeline — Production Configuration
+# ======================================================
+# Includes: video support, advanced quality, tracking, compliance, distributed
 
 pipeline:
   name: production-pipeline
@@ -25,12 +26,18 @@ sources:
     name: 20231101.en
     split: train
     text_column: text
-    # max_samples: 1000000
     
   # - type: huggingface
   #   path: EleutherAI/pile
   #   streaming: true
   #   text_column: text
+
+  # Video sources
+  # - type: video
+  #   path: ./data/videos
+  #   caption_path: ./data/videos/captions.jsonl
+  #   frame_strategy: uniform
+  #   max_frames: 32
 
 # Quality filtering settings
 quality:
@@ -46,6 +53,18 @@ quality:
   filter_toxic: true
   toxic_threshold: 0.7
 
+# Advanced quality pipeline
+advanced_quality:
+  enabled: true
+  perplexity_filter: true
+  perplexity_model: gpt2
+  max_perplexity: 1500.0
+  min_perplexity: 5.0
+  llm_judge: false
+  llm_judge_provider: local
+  llm_judge_model: gpt-4o-mini
+  min_llm_score: 0.5
+
 # Deduplication settings
 deduplication:
   enabled: true
@@ -54,6 +73,9 @@ deduplication:
   minhash_num_perm: 256
   minhash_bands: 32
   cache_size: 1000000
+  # For embedding-based dedup (method: embedding)
+  embedding_model: all-MiniLM-L6-v2
+  embedding_threshold: 0.92
 
 # Shard output settings
 sharding:
@@ -74,6 +96,16 @@ tokenization:
   truncation: true
   max_length: 2048
 
+# Video processing
+video:
+  enabled: false
+  frame_strategy: uniform
+  max_frames: 32
+  target_fps: 1.0
+  resize: [224, 224]
+  codebook_size: 1024
+  video_token_offset: 300000
+
 # Storage settings for upload
 storage:
   backend: huggingface
@@ -82,3 +114,44 @@ storage:
   # backend: s3
   # bucket: my-bucket
   # prefix: training-data/
+
+# Observability & lineage tracking
+tracking:
+  enabled: true
+  backend: local          
+  project_name: auralith-data-pipeline
+  # experiment_name: production-run
+  # run_name: run-20250101
+  lineage: true
+  data_cards: true
+
+# Compliance & license detection
+compliance:
+  enabled: true
+  license_detection: true
+  allow_permissive: true
+  allow_copyleft: false
+  audit_log_path: ./data/audit/compliance.jsonl
+  pii_rescan: false
+
+# Security — PII scrubbing + data sanitization
+# Ensures NO private user data from any country enters training data.
+# This is the dedicated security layer on top of the legacy PII remover.
+security:
+  enabled: true
+  mode: strict                        # strict = scrub ALL PII globally
+  replacement_style: tag              # tag | hash | remove
+  rescan_after_processing: true       # second pass after all preprocessing
+  log_redactions: true                # audit every redaction
+  fail_on_pii: false                  # set true to BLOCK samples with residual PII
+  audit_log_path: ./data/audit/privacy.jsonl
+  sanitize_secrets: true              # redact API keys, AWS keys, passwords, etc.
+  block_internal_urls: true           # redact internal/corporate URLs
+
+# Distributed processing
+distributed:
+  enabled: false
+  backend: local           # local, ray, spark
+  ray_address: auto
+  # num_cpus: 8
+  # num_gpus: 2

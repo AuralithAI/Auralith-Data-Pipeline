@@ -1,0 +1,98 @@
+# Dependabot configuration for Auralith-Data-Pipeline
+# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates
+version: 2
+
+updates:
+  # Python dependencies (pyproject.toml + requirements/)
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "AuralithAI"
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:
+      prefix: "deps(py)"
+    groups:
+      # Group core ML/data dependencies together
+      ml-core:
+        patterns:
+          - "numpy"
+          - "scipy"
+          - "safetensors"
+          - "datasets"
+          - "huggingface-hub"
+          - "sentencepiece"
+      # Group cloud SDKs together
+      cloud-sdks:
+        patterns:
+          - "boto3"
+          - "google-cloud-*"
+          - "azure-*"
+      # Group dev/test dependencies together
+      dev-tools:
+        patterns:
+          - "pytest*"
+          - "mypy"
+          - "ruff"
+          - "black"
+      # Group preprocessing utilities
+      preprocessing:
+        patterns:
+          - "ftfy"
+          - "langdetect"
+          - "datasketch"
+          - "xxhash"
+      # Group multimodal dependencies
+      multimodal:
+        patterns:
+          - "Pillow"
+          - "soundfile"
+          - "librosa"
+          - "opencv-*"
+          - "timm"
+
+  # Dockerfile base image
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "AuralithAI"
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "deps(docker)"
+
+  # GitHub Actions versions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "AuralithAI"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "deps(actions)"
+    groups:
+      # Group all GH Actions updates into one PR
+      actions:
+        patterns:
+          - "*"

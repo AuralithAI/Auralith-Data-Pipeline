@@ -1,0 +1,119 @@
+# Auralith Data Pipeline — Helm Values
+# Override these values for your deployment
+
+image:
+  repository: ghcr.io/auralithai/auralith-data-pipeline
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+# Pipeline configuration
+pipeline:
+  preset: production
+  datasets:
+    - wikipedia
+    - c4
+    - redpajama
+    - the_pile
+    - arxiv
+  maxSamples: 100000
+  streaming: true
+  deduplicate: true
+  qualityFilter: true
+  removePii: true
+
+# Worker configuration (for distributed mode)
+workers:
+  replicas: 4
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+    limits:
+      cpu: "8"
+      memory: 32Gi
+      # Uncomment for GPU workers:
+      # nvidia.com/gpu: "1"
+
+# Storage
+storage:
+  # Shared PVC for intermediate data
+  sharedVolume:
+    enabled: true
+    storageClass: gp3-csi
+    size: 500Gi
+    accessMode: ReadWriteMany
+
+  # S3 output configuration
+  s3:
+    enabled: true
+    bucket: auralith-training-data
+    region: us-east-1
+    storageClass: INTELLIGENT_TIERING
+
+# Argo Workflows integration
+argo:
+  enabled: true
+  schedule: "0 2 * * 0"  # Weekly on Sundays at 2 AM UTC
+  ttlSecondsAfterCompletion: 86400
+
+# Ray cluster for distributed processing
+ray:
+  enabled: false
+  head:
+    resources:
+      cpu: "4"
+      memory: 8Gi
+  workers:
+    replicas: 4
+    resources:
+      cpu: "8"
+      memory: 32Gi
+      # nvidia.com/gpu: "1"
+
+# Redis (for backward compatibility — prefer Argo for orchestration)
+redis:
+  enabled: false
+  architecture: standalone
+
+# Monitoring
+monitoring:
+  enabled: true
+  prometheus:
+    scrape: true
+    port: 8000
+  grafana:
+    dashboards: true
+
+serviceAccount:
+  create: true
+  name: auralith-pipeline
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/auralith-pipeline"
+
+# Security — NEVER use static AWS keys. IRSA only.
+# See docs/SECURITY.md
+security:
+  irsa:
+    enabled: true
+    roleArn: "arn:aws:iam::123456789012:role/auralith-pipeline"
+  # GCP Workload Identity (for GKE)
+  workloadIdentity:
+    enabled: false
+    serviceAccount: ""
+  # Azure Workload Identity (for AKS)
+  azureWorkloadIdentity:
+    enabled: false
+    clientId: ""
+
+# Run:AI scheduler compatibility (DGX Cloud)
+runai:
+  enabled: false
+  project: auralith
+  gpu:
+    type: A100
+    count: 1
+
+# Node affinity for GPU nodes
+nodeSelector: {}
+tolerations: []
+affinity: {}

@@ -1,0 +1,209 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: auralith-pipeline-
+  labels:
+    app: auralith-pipeline
+    version: "2.0"
+spec:
+  entrypoint: full-pipeline
+  serviceAccountName: auralith-pipeline   # ← must have IRSA annotation
+  ttlStrategy:
+    secondsAfterCompletion: 86400   # 24h
+  
+  # ──────────────────────────────────────────────────────────────
+  # SECURITY NOTE — AWS Authentication via IRSA (IAM Roles for
+  # Service Accounts).  NO static AWS_ACCESS_KEY_ID or
+  # AWS_SECRET_ACCESS_KEY anywhere in this manifest.
+  #
+  # The ServiceAccount "auralith-pipeline" is annotated with:
+  #   eks.amazonaws.com/role-arn: arn:aws:iam::<ACCOUNT>:role/auralith-pipeline
+  #
+  # That IAM role's trust policy restricts AssumeRoleWithWebIdentity
+  # to this service account + namespace only.  The AWS SDK inside
+  # every container automatically picks up the projected OIDC token
+  # at /var/run/secrets/eks.amazonaws.com/serviceaccount/token.
+  #
+  # Required IAM permissions on the role:
+  #   s3:PutObject, s3:GetObject, s3:ListBucket, s3:DeleteObject
+  #   on arn:aws:s3:::<bucket>/* and arn:aws:s3:::<bucket>
+  # ──────────────────────────────────────────────────────────────
+
+  arguments:
+    parameters:
+      - name: datasets
+        value: "wikipedia,c4,redpajama,the_pile,arxiv"
+      - name: max-samples
+        value: "100000"
+      - name: output-bucket
+        value: "auralith-training-data"
+      - name: aws-region
+        value: "us-east-1"
+      - name: preset
+        value: "production"
+      - name: image
+        value: "ghcr.io/auralithai/auralith-data-pipeline:latest"
+
+  volumeClaimTemplates:
+    - metadata:
+        name: shared-data
+      spec:
+        accessModes: ["ReadWriteMany"]
+        resources:
+          requests:
+            storage: 500Gi
+        storageClassName: gp3-csi
+
+  templates:
+    # ============================================================
+    # Main DAG
+    # ============================================================
+    - name: full-pipeline
+      dag:
+        tasks:
+          - name: process-wikipedia
+            template: process-dataset
+            arguments:
+              parameters:
+                - name: dataset
+                  value: wikipedia
+                - name: max-samples
+                  value: "{{workflow.parameters.max-samples}}"
+
+          - name: process-c4
+            template: process-dataset
+            arguments:
+              parameters:
+                - name: dataset
+                  value: c4
+                - name: max-samples
+                  value: "{{workflow.parameters.max-samples}}"
+
+          - name: process-redpajama
+            template: process-dataset
+            arguments:
+              parameters:
+                - name: dataset
+                  value: redpajama
+                - name: max-samples
+                  value: "{{workflow.parameters.max-samples}}"
+
+          - name: process-the-pile
+            template: process-dataset
+            arguments:
+              parameters:
+                - name: dataset
+                  value: the_pile
+                - name: max-samples
+                  value: "{{workflow.parameters.max-samples}}"
+
+          - name: process-arxiv
+            template: process-dataset
+            arguments:
+              parameters:
+                - name: dataset
+                  value: arxiv
+                - name: max-samples
+                  value: "{{workflow.parameters.max-samples}}"
+
+          - name: merge-and-upload
+            template: upload-to-s3
+            dependencies:
+              - process-wikipedia
+              - process-c4
+              - process-redpajama
+              - process-the-pile
+              - process-arxiv
+
+          - name: generate-report
+            template: report
+            dependencies:
+              - merge-and-upload
+
+    # ============================================================
+    # Process a single dataset
+    # ============================================================
+    - name: process-dataset
+      inputs:
+        parameters:
+          - name: dataset
+          - name: max-samples
+      container:
+        image: "{{workflow.parameters.image}}"
+        command: ["auralith-pipeline"]
+        args:
+          - collect
+          - --dataset
+          - "{{inputs.parameters.dataset}}"
+          - --output
+          - /data/shards/{{inputs.parameters.dataset}}
+          - --max-samples
+          - "{{inputs.parameters.max-samples}}"
+          - --streaming
+          - --deduplicate
+          - --quality-filter
+          - --preset
+          - "{{workflow.parameters.preset}}"
+        env:
+          - name: AWS_DEFAULT_REGION
+            value: "{{workflow.parameters.aws-region}}"
+          # IRSA injects AWS_ROLE_ARN and AWS_WEB_IDENTITY_TOKEN_FILE
+          # automatically — no secrets needed
+        resources:
+          requests:
+            cpu: "4"
+            memory: 16Gi
+          limits:
+            cpu: "8"
+            memory: 32Gi
+        volumeMounts:
+          - name: shared-data
+            mountPath: /data
+      retryStrategy:
+        limit: 3
+        retryPolicy: OnFailure
+        backoff:
+          duration: "30s"
+          factor: 2
+
+    # ============================================================
+    # Upload merged shards to S3 — uses IRSA, NO static keys
+    # ============================================================
+    - name: upload-to-s3
+      container:
+        image: amazon/aws-cli:latest
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            aws s3 sync /data/shards/ \
+              s3://{{workflow.parameters.output-bucket}}/datasets/ \
+              --storage-class INTELLIGENT_TIERING
+        env:
+          - name: AWS_DEFAULT_REGION
+            value: "{{workflow.parameters.aws-region}}"
+        volumeMounts:
+          - name: shared-data
+            mountPath: /data
+
+    # ============================================================
+    # Generate processing report
+    # ============================================================
+    - name: report
+      container:
+        image: "{{workflow.parameters.image}}"
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            echo "# Auralith Pipeline Report" > /data/report.md
+            echo "Date: $(date)" >> /data/report.md
+            echo "" >> /data/report.md
+            if [ -d "/data/shards" ]; then
+              echo "## Shards" >> /data/report.md
+              find /data/shards -name "*.safetensors" -exec ls -lh {} \; >> /data/report.md
+              echo "" >> /data/report.md
+              echo "Total size: $(du -sh /data/shards | cut -f1)" >> /data/report.md
+            fi
+            cat /data/report.md
+        volumeMounts:
+          - name: shared-data
+            mountPath: /data

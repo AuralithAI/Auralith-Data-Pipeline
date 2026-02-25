@@ -600,18 +600,32 @@ class AudioTokenizer:
 
 
 class MultimodalTokenizer:
-    """Unified tokenizer for text + images + audio.
+    """Unified tokenizer for text + images + audio + video.
 
-    Fuses multiple modalities into a single token sequence.
+    Fuses multiple modalities into a single token sequence and produces
+    a modality_mask tensor so RT-DLM's controller can route tokens to
+    the correct processing module in O(1).
+
+    Modality mask values (RT-DLM compatible):
+        0 = text, 1 = image, 2 = audio, 3 = video, 4 = code
     """
+
+    # Modality constants — must match BPETokenizer.MODALITY_*
+    MODALITY_TEXT = 0
+    MODALITY_IMAGE = 1
+    MODALITY_AUDIO = 2
+    MODALITY_VIDEO = 3
+    MODALITY_CODE = 4
 
     def __init__(
         self,
         text_tokenizer: Any,  # BPETokenizer instance
         image_tokenizer: ImageTokenizer | None = None,
         audio_tokenizer: AudioTokenizer | None = None,
+        video_tokenizer: Any | None = None,  # VideoTokenizer instance
         image_token_offset: int = 100000,
         audio_token_offset: int = 200000,
+        video_token_offset: int = 300000,
     ):
         """Initialize multimodal tokenizer.
 
@@ -619,75 +633,161 @@ class MultimodalTokenizer:
             text_tokenizer: BPE tokenizer for text
             image_tokenizer: Image tokenizer (optional)
             audio_tokenizer: Audio tokenizer (optional)
+            video_tokenizer: Video tokenizer (optional)
             image_token_offset: Offset to add to image token IDs
             audio_token_offset: Offset to add to audio token IDs
+            video_token_offset: Offset to add to video token IDs
         """
         self.text_tokenizer = text_tokenizer
         self.image_tokenizer = image_tokenizer
         self.audio_tokenizer = audio_tokenizer
+        self.video_tokenizer = video_tokenizer
 
         # Token offsets to avoid ID collisions
         self.image_token_offset = image_token_offset
         self.audio_token_offset = audio_token_offset
+        self.video_token_offset = video_token_offset
 
     def encode(
         self,
         text: str,
         image_path: str | Path | None = None,
         audio_path: str | Path | None = None,
+        video_path: str | Path | None = None,
         max_length: int = 2048,
     ) -> list[int]:
         """Encode multimodal input to unified token sequence.
 
         Args:
-            text: Text content (can include <image_start>, <audio_start> placeholders)
+            text: Text content (can include <IMG>, <AUDIO>, <VIDEO> placeholders)
             image_path: Optional image file path
             audio_path: Optional audio file path
+            video_path: Optional video file path
             max_length: Maximum sequence length
 
         Returns:
             Unified list of token IDs
         """
+        result = self.encode_with_mask(
+            text=text,
+            image_path=image_path,
+            audio_path=audio_path,
+            video_path=video_path,
+            max_length=max_length,
+        )
+        return result["input_ids"]
+
+    def encode_with_mask(
+        self,
+        text: str,
+        image_path: str | Path | None = None,
+        audio_path: str | Path | None = None,
+        video_path: str | Path | None = None,
+        max_length: int = 2048,
+    ) -> dict[str, list[int]]:
+        """Encode multimodal input and produce modality_mask for RT-DLM.
+
+        Returns:
+            Dict with keys:
+                input_ids:      list[int]  — unified token sequence
+                modality_mask:  list[int]  — per-token modality (0=text,1=img,2=aud,3=vid)
+                labels:         list[int]  — causal LM labels (-100 for special tokens)
+        """
         # Tokenize text first
         text_tokens = self.text_tokenizer.encode(text, add_special_tokens=True, max_length=None)
+        modality_mask = [self.MODALITY_TEXT] * len(text_tokens)
 
-        # Process image if provided
+        # --- Image insertion ---
         if image_path and self.image_tokenizer:
             image_tokens = self.image_tokenizer.encode(image_path)
-            # Add offset to avoid collision with text tokens
             image_tokens = [tid + self.image_token_offset for tid in image_tokens]
 
-            # Insert image tokens at placeholder
-            image_start_id = self.text_tokenizer.SPECIAL_TOKENS["<image_start>"]
-            image_end_id = self.text_tokenizer.SPECIAL_TOKENS["<image_end>"]
+            # Use new canonical token name, fall back to legacy
+            img_start_id = self.text_tokenizer.SPECIAL_TOKENS.get(
+                "<IMG>", self.text_tokenizer.SPECIAL_TOKENS.get("<image_start>", -1)
+            )
+            img_end_id = self.text_tokenizer.SPECIAL_TOKENS.get(
+                "<IMG_END>", self.text_tokenizer.SPECIAL_TOKENS.get("<image_end>", -1)
+            )
 
-            if image_start_id in text_tokens:
-                # Find insertion point
-                idx = text_tokens.index(image_start_id)
-                # Insert: <image_start> + image_tokens + <image_end>
+            if img_start_id in text_tokens:
+                idx = text_tokens.index(img_start_id)
                 text_tokens = (
-                    text_tokens[: idx + 1] + image_tokens + [image_end_id] + text_tokens[idx + 1 :]
+                    text_tokens[: idx + 1] + image_tokens + [img_end_id] + text_tokens[idx + 1 :]
                 )
+                # Build mask: start marker=image, image tokens=image, end marker=image
+                img_mask = [self.MODALITY_IMAGE] * (len(image_tokens) + 1)  # +1 for end marker
+                modality_mask = (
+                    modality_mask[: idx + 1] + img_mask + modality_mask[idx + 1 :]
+                )
+                # Mark the start marker as image too
+                modality_mask[idx] = self.MODALITY_IMAGE
 
-        # Process audio if provided
+        # --- Audio insertion ---
         if audio_path and self.audio_tokenizer:
             audio_tokens = self.audio_tokenizer.encode(audio_path)
             audio_tokens = [tid + self.audio_token_offset for tid in audio_tokens]
 
-            audio_start_id = self.text_tokenizer.SPECIAL_TOKENS["<audio_start>"]
-            audio_end_id = self.text_tokenizer.SPECIAL_TOKENS["<audio_end>"]
+            aud_start_id = self.text_tokenizer.SPECIAL_TOKENS.get(
+                "<AUDIO>", self.text_tokenizer.SPECIAL_TOKENS.get("<audio_start>", -1)
+            )
+            aud_end_id = self.text_tokenizer.SPECIAL_TOKENS.get(
+                "<AUDIO_END>", self.text_tokenizer.SPECIAL_TOKENS.get("<audio_end>", -1)
+            )
 
-            if audio_start_id in text_tokens:
-                idx = text_tokens.index(audio_start_id)
+            if aud_start_id in text_tokens:
+                idx = text_tokens.index(aud_start_id)
                 text_tokens = (
-                    text_tokens[: idx + 1] + audio_tokens + [audio_end_id] + text_tokens[idx + 1 :]
+                    text_tokens[: idx + 1] + audio_tokens + [aud_end_id] + text_tokens[idx + 1 :]
                 )
+                aud_mask = [self.MODALITY_AUDIO] * (len(audio_tokens) + 1)
+                modality_mask = (
+                    modality_mask[: idx + 1] + aud_mask + modality_mask[idx + 1 :]
+                )
+                modality_mask[idx] = self.MODALITY_AUDIO
+
+        # --- Video insertion ---
+        if video_path and self.video_tokenizer:
+            video_tokens = self.video_tokenizer.encode(video_path)
+            video_tokens = [tid + self.video_token_offset for tid in video_tokens]
+
+            vid_start_id = self.text_tokenizer.SPECIAL_TOKENS.get(
+                "<VIDEO>", self.text_tokenizer.SPECIAL_TOKENS.get("<video_start>", -1)
+            )
+            vid_end_id = self.text_tokenizer.SPECIAL_TOKENS.get(
+                "<VIDEO_END>", self.text_tokenizer.SPECIAL_TOKENS.get("<video_end>", -1)
+            )
+
+            if vid_start_id in text_tokens:
+                idx = text_tokens.index(vid_start_id)
+                text_tokens = (
+                    text_tokens[: idx + 1] + video_tokens + [vid_end_id] + text_tokens[idx + 1 :]
+                )
+                vid_mask = [self.MODALITY_VIDEO] * (len(video_tokens) + 1)
+                modality_mask = (
+                    modality_mask[: idx + 1] + vid_mask + modality_mask[idx + 1 :]
+                )
+                modality_mask[idx] = self.MODALITY_VIDEO
 
         # Truncate to max length
         if len(text_tokens) > max_length:
             text_tokens = text_tokens[:max_length]
+            modality_mask = modality_mask[:max_length]
 
-        return text_tokens
+        # Build causal LM labels: shift input_ids, mask special tokens with -100
+        special_ids = set(self.text_tokenizer.SPECIAL_TOKENS.values())
+        labels = []
+        for i, tid in enumerate(text_tokens):
+            if tid in special_ids:
+                labels.append(-100)  # Ignore special tokens in loss
+            else:
+                labels.append(tid)
+
+        return {
+            "input_ids": text_tokens,
+            "modality_mask": modality_mask,
+            "labels": labels,
+        }
 
     def get_total_vocab_size(self) -> int:
         """Get total vocabulary size across all modalities."""
@@ -698,5 +798,8 @@ class MultimodalTokenizer:
 
         if self.audio_tokenizer:
             total = max(total, self.audio_token_offset + self.audio_tokenizer.codebook_size)
+
+        if self.video_tokenizer:
+            total = max(total, self.video_token_offset + self.video_tokenizer.codebook_size)
 
         return total

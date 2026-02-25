@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, production-grade]
   pull_request:
     branches: [main]
 
@@ -36,14 +36,18 @@ jobs:
         run: |
           mypy src/
       
-      - name: Run tests
+      - name: Run tests with coverage
         run: |
-          pytest tests/ -v --cov=src/auralith_pipeline --cov-report=xml
-      
-      - name: Upload coverage
-        uses: codecov/codecov-action@v3
-        with:
-          file: ./coverage.xml
+          pytest tests/ -v --cov=src/auralith_pipeline --cov-report=xml --cov-report=term-missing
+
+      - name: Coverage summary
+        if: always() && matrix.python-version == '3.12'
+        run: |
+          echo "## 📊 Test Coverage Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          pytest tests/ --cov=src/auralith_pipeline --cov-report=term -q --no-header 2>/dev/null | tail -n +1 >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
 
   build:
     runs-on: ubuntu-latest

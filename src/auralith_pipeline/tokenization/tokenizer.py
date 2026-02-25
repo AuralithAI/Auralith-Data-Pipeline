@@ -16,15 +16,33 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TokenizedSample:
-    """A tokenized sample ready for training."""
+    """A tokenized sample ready for training.
+
+    Fields align with RT-DLM's expected SafeTensors schema:
+        input_ids:      All tokens (text + image + audio + video)
+        attention_mask:  1 = real token, 0 = padding
+        modality_mask:   Per-token modality (0=text, 1=image, 2=audio, 3=video, 4=code)
+        labels:          Causal LM labels (-100 = ignore in loss)
+        metadata:        Source, quality scores, lineage, etc.
+    """
 
     input_ids: list[int]
     attention_mask: list[int]
     metadata: dict[str, Any]
+    modality_mask: list[int] | None = None
+    labels: list[int] | None = None
 
     @property
     def length(self) -> int:
         return len(self.input_ids)
+
+    def __post_init__(self):
+        """Fill defaults for modality_mask and labels if not provided."""
+        if self.modality_mask is None:
+            self.modality_mask = [0] * len(self.input_ids)  # Default: all text
+        if self.labels is None:
+            # Default causal LM labels = input_ids (no masking)
+            self.labels = list(self.input_ids)
 
 
 class Tokenizer:

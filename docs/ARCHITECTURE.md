@@ -9,61 +9,61 @@ The Auralith Data Pipeline is designed as a modular, scalable system for collect
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        DATA SOURCES                                 │
-│  (HuggingFace, Common Crawl, Local Files, Web Scraping, etc.)      │
+│  (HuggingFace, Common Crawl, Local Files, Web Scraping, etc.)       │
 └────────────────┬────────────────────────────────────────────────────┘
                  │
                  ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                     PREPROCESSING STAGE                             │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐             │
-│  │  Normalize   │→ │ Deduplicate  │→ │   Quality    │             │
-│  │    Text      │  │  (MinHash)   │  │   Filter    │             │
-│  └──────────────┘  └──────────────┘  └──────────────┘             │
-│                                              │                      │
-│  ┌──────────────┐                           │                      │
-│  │ PII Removal  │◀─────────────────────────┘                      │
-│  └──────────────┘                                                  │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐               │
+│  │  Normalize   │→ │ Deduplicate  │→ │   Quality    │               │
+│  │    Text      │  │  (MinHash)   │  │   Filter     │               │
+│  └──────────────┘  └──────────────┘  └──────────────┘               │
+│                                               │                     │
+│  ┌──────────────┐                             │                     │
+│  │ PII Removal  │◀───────────────────────────┘                      │
+│  └──────────────┘                                                   │
 └────────────────┬────────────────────────────────────────────────────┘
                  │
                  ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                     EXTRACTION STAGE                                │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐             │
-│  │     PDF      │  │    Images    │  │     Audio    │             │
-│  │ Extraction   │  │ Embedding    │  │ Transcription│             │
-│  └──────────────┘  └──────────────┘  └──────────────┘             │
-│                                                                      │
-│  ┌──────────────┐  ┌──────────────┐                               │
-│  │   DOCX       │  │   Video      │                               │
-│  │ Extraction   │  │ Processing   │                               │
-│  └──────────────┘  └──────────────┘                               │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐               │
+│  │     PDF      │  │    Images    │  │     Audio    │               │
+│  │ Extraction   │  │ Embedding    │  │ Transcription│               │
+│  └──────────────┘  └──────────────┘  └──────────────┘               │
+│                                                                     │
+│  ┌──────────────┐  ┌──────────────┐                                 │
+│  │   DOCX       │  │   Video      │                                 │
+│  │ Extraction   │  │ Processing   │                                 │
+│  └──────────────┘  └──────────────┘                                 │
 └────────────────┬────────────────────────────────────────────────────┘
                  │
                  ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                    TOKENIZATION STAGE                               │
-│  ┌──────────────────────────────────────────────────────────────┐  │
-│  │  Convert text to token IDs using tokenizer                   │  │
-│  │  Support for multiple tokenizers (BPE, WordPiece, etc.)      │  │
-│  │  Create attention masks and token metadata                   │  │
-│  └──────────────────────────────────────────────────────────────┘  │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │  Convert text to token IDs using tokenizer                   │   │
+│  │  Support for multiple tokenizers (BPE, WordPiece, etc.)      │   │
+│  │  Create attention masks and token metadata                   │   │
+│  └──────────────────────────────────────────────────────────────┘   │
 └────────────────┬────────────────────────────────────────────────────┘
                  │
                  ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                     SHARDING STAGE                                  │
-│  ┌──────────────────────────────────────────────────────────────┐  │
-│  │  Organize tokenized samples into efficient SafeTensors       │  │
-│  │  Configurable shard size (default: 1GB)                      │  │
-│  │  Metadata tracking (statistics, checksums, etc.)             │  │
-│  │  Optional compression (zstd, gzip)                           │  │
-│  └──────────────────────────────────────────────────────────────┘  │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │  Organize tokenized samples into efficient SafeTensors       │   │
+│  │  Configurable shard size (default: 1GB)                      │   │
+│  │  Metadata tracking (statistics, checksums, etc.)             │   │
+│  │  Optional compression (zstd, gzip)                           │   │
+│  └──────────────────────────────────────────────────────────────┘   │
 └────────────────┬────────────────────────────────────────────────────┘
                  │
                  ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                     STORAGE STAGE                                   │
-│  (HuggingFace Hub, S3, GCS, Azure Blob, Local Filesystem)          │
+│  (HuggingFace Hub, S3, GCS, Azure Blob, Local Filesystem)           │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 

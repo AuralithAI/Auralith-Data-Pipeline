@@ -24,15 +24,33 @@ class QualityConfig:
 
 
 @dataclass
+class AdvancedQualityConfig:
+    """Advanced quality pipeline configuration."""
+
+    enabled: bool = False
+    perplexity_filter: bool = False
+    perplexity_model: str = "gpt2"
+    max_perplexity: float = 1500.0
+    min_perplexity: float = 5.0
+    llm_judge: bool = False
+    llm_judge_provider: str = "local"
+    llm_judge_model: str | None = None
+    min_llm_score: float = 0.5
+
+
+@dataclass
 class DeduplicationConfig:
     """Deduplication configuration."""
 
     enabled: bool = True
-    method: Literal["minhash", "exact", "simhash"] = "minhash"
+    method: Literal["minhash", "exact", "simhash", "embedding"] = "minhash"
     minhash_threshold: float = 0.85
     minhash_num_perm: int = 128
     minhash_bands: int = 32
     cache_size: int = 1000000
+    # Embedding-based (FAISS) dedup
+    embedding_model: str = "all-MiniLM-L6-v2"
+    embedding_threshold: float = 0.92
 
 
 @dataclass
@@ -61,6 +79,19 @@ class TokenizationConfig:
 
 
 @dataclass
+class VideoConfig:
+    """Video processing configuration."""
+
+    enabled: bool = False
+    frame_strategy: Literal["uniform", "fps", "keyframe"] = "uniform"
+    max_frames: int = 32
+    target_fps: float = 1.0
+    resize: tuple[int, int] = (224, 224)
+    codebook_size: int = 1024
+    video_token_offset: int = 300000
+
+
+@dataclass
 class StorageConfig:
     """Storage configuration."""
 
@@ -70,6 +101,70 @@ class StorageConfig:
     bucket: str | None = None
     container: str | None = None
     prefix: str = ""
+
+
+@dataclass
+class TrackingConfig:
+    """Observability / experiment tracking."""
+
+    enabled: bool = False
+    backend: Literal["local", "mlflow", "wandb"] = "local"
+    project_name: str = "auralith-data-pipeline"
+    experiment_name: str | None = None
+    run_name: str | None = None
+    lineage: bool = True
+    data_cards: bool = True
+
+
+@dataclass
+class ComplianceConfig:
+    """Compliance and license detection."""
+
+    enabled: bool = False
+    license_detection: bool = True
+    allow_permissive: bool = True
+    allow_copyleft: bool = False
+    audit_log_path: str | None = None
+    pii_rescan: bool = False
+
+
+@dataclass
+class SecurityConfig:
+    """Security — PII scrubbing and data sanitization.
+
+    This is the dedicated security layer that ensures no private user data
+    from any jurisdiction worldwide enters the training pipeline.
+    """
+
+    enabled: bool = True
+    mode: Literal["strict", "jurisdiction"] = "strict"
+    replacement_style: Literal["tag", "hash", "remove"] = "tag"
+    rescan_after_processing: bool = True
+    log_redactions: bool = True
+    fail_on_pii: bool = False
+    audit_log_path: str | None = None
+    # Data sanitizer (credentials, secrets, API keys)
+    sanitize_secrets: bool = True
+    block_internal_urls: bool = True
+
+
+@dataclass
+class DistributedConfig:
+    """Distributed processing configuration."""
+
+    enabled: bool = False
+    backend: Literal["ray", "spark", "local"] = "local"
+    ray_address: str = "auto"
+    num_cpus: int | None = None
+    num_gpus: int | None = None
+
+
+def _convert_video_data(data: dict[str, Any]) -> dict[str, Any]:
+    """Convert YAML-loaded video config, coercing resize list to tuple."""
+    result = dict(data)
+    if "resize" in result and isinstance(result["resize"], list):
+        result["resize"] = tuple(result["resize"])
+    return result
 
 
 @dataclass
@@ -94,10 +189,16 @@ class PipelineConfig:
 
     # Sub-configs
     quality: QualityConfig = field(default_factory=QualityConfig)
+    advanced_quality: AdvancedQualityConfig = field(default_factory=AdvancedQualityConfig)
     deduplication: DeduplicationConfig = field(default_factory=DeduplicationConfig)
     sharding: ShardConfig = field(default_factory=ShardConfig)
     tokenization: TokenizationConfig = field(default_factory=TokenizationConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
+    video: VideoConfig = field(default_factory=VideoConfig)
+    tracking: TrackingConfig = field(default_factory=TrackingConfig)
+    compliance: ComplianceConfig = field(default_factory=ComplianceConfig)
+    security: SecurityConfig = field(default_factory=SecurityConfig)
+    distributed: DistributedConfig = field(default_factory=DistributedConfig)
 
     @classmethod
     def from_yaml(cls, path: str) -> "PipelineConfig":
@@ -109,19 +210,39 @@ class PipelineConfig:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PipelineConfig":
         """Create configuration from dictionary."""
+        # Extract nested config sections
+        pipeline_data = data.pop("pipeline", None)
+        if pipeline_data:
+            data.update(pipeline_data)
+
         quality_data = data.pop("quality", {})
+        advanced_quality_data = data.pop("advanced_quality", {})
         dedup_data = data.pop("deduplication", {})
         shard_data = data.pop("sharding", {})
         token_data = data.pop("tokenization", {})
         storage_data = data.pop("storage", {})
+        video_data = data.pop("video", {})
+        tracking_data = data.pop("tracking", {})
+        compliance_data = data.pop("compliance", {})
+        security_data = data.pop("security", {})
+        distributed_data = data.pop("distributed", {})
+
+        # Remove non-config keys (e.g. 'sources')
+        data.pop("sources", None)
 
         return cls(
             **data,
             quality=QualityConfig(**quality_data),
+            advanced_quality=AdvancedQualityConfig(**advanced_quality_data),
             deduplication=DeduplicationConfig(**dedup_data),
             sharding=ShardConfig(**shard_data),
             tokenization=TokenizationConfig(**token_data),
             storage=StorageConfig(**storage_data),
+            video=VideoConfig(**_convert_video_data(video_data)),
+            tracking=TrackingConfig(**tracking_data),
+            compliance=ComplianceConfig(**compliance_data),
+            security=SecurityConfig(**security_data),
+            distributed=DistributedConfig(**distributed_data),
         )
 
     @classmethod
@@ -154,12 +275,23 @@ class PipelineConfig:
                     minhash_threshold=0.85,
                     minhash_num_perm=256,
                 ),
+                advanced_quality=AdvancedQualityConfig(enabled=True, perplexity_filter=True),
+                tracking=TrackingConfig(enabled=True, lineage=True, data_cards=True),
+                compliance=ComplianceConfig(enabled=True),
+                security=SecurityConfig(
+                    enabled=True,
+                    mode="strict",
+                    rescan_after_processing=True,
+                    log_redactions=True,
+                    sanitize_secrets=True,
+                ),
             ),
             "multimodal": cls(
                 name="multimodal-pipeline",
                 batch_size=100,
                 num_workers=4,
                 sharding=ShardConfig(max_size_mb=500),
+                video=VideoConfig(enabled=True),
             ),
         }
 

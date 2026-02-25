@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "auralith-data-pipeline"
-version = "1.0.0"
+version = "2.0.0"
 description = "Production-grade data collection and processing pipeline for training LLMs and multimodal AI"
 readme = "README.md"
 license = "Apache-2.0"
@@ -73,6 +73,22 @@ multimodal = [
     "librosa>=0.10.0",
     "opencv-python>=4.8.0",
     "timm>=0.9.0",  # Includes PyTorch - very large!
+    "decord>=0.6.0",
+]
+# Advanced quality & deduplication
+quality = [
+    "transformers>=4.35.0",
+    "sentence-transformers>=2.2.0",
+    "faiss-cpu>=1.7.4",
+]
+# Experiment tracking
+tracking = [
+    "mlflow>=2.9.0",
+    "wandb>=0.16.0",
+]
+# Distributed processing
+distributed = [
+    "ray[default]>=2.9.0",
 ]
 # Development tools
 dev = [
@@ -85,7 +101,7 @@ dev = [
     "pre-commit>=3.4.0",
 ]
 all = [
-    "auralith-data-pipeline[pdf,cloud,multimodal,dev]",
+    "auralith-data-pipeline[pdf,cloud,multimodal,quality,tracking,distributed,dev]",
 ]
 
 [project.scripts]

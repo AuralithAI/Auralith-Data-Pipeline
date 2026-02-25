@@ -1,0 +1,73 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "auralith-data-pipeline.fullname" . }}
+  labels:
+    {{- include "auralith-data-pipeline.labels" . | nindent 4 }}
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: {{ .Values.argo.ttlSecondsAfterCompletion | default 86400 }}
+  template:
+    metadata:
+      labels:
+        {{- include "auralith-data-pipeline.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      restartPolicy: OnFailure
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: pipeline
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["auralith-pipeline"]
+          args:
+            - collect
+            {{- range .Values.pipeline.datasets }}
+            - --dataset
+            - {{ . | quote }}
+            {{- end }}
+            - --output
+            - /data/shards
+            - --max-samples
+            - {{ .Values.pipeline.maxSamples | quote }}
+            {{- if .Values.pipeline.streaming }}
+            - --streaming
+            {{- end }}
+            {{- if .Values.pipeline.deduplicate }}
+            - --deduplicate
+            {{- end }}
+            {{- if .Values.pipeline.qualityFilter }}
+            - --quality-filter
+            {{- end }}
+            - --preset
+            - {{ .Values.pipeline.preset }}
+          resources:
+            {{- toYaml .Values.workers.resources | nindent 12 }}
+          {{- if .Values.storage.sharedVolume.enabled }}
+          volumeMounts:
+            - name: shared-data
+              mountPath: /data
+          {{- end }}
+          env:
+            {{- if .Values.storage.s3.enabled }}
+            - name: S3_BUCKET
+              value: {{ .Values.storage.s3.bucket | quote }}
+            - name: AWS_DEFAULT_REGION
+              value: {{ .Values.storage.s3.region | quote }}
+            # AWS credentials come from IRSA — no static keys needed.
+            # The EKS pod identity webhook injects AWS_ROLE_ARN and
+            # AWS_WEB_IDENTITY_TOKEN_FILE into this container automatically.
+            {{- end }}
+      {{- if .Values.storage.sharedVolume.enabled }}
+      volumes:
+        - name: shared-data
+          persistentVolumeClaim:
+            claimName: {{ include "auralith-data-pipeline.fullname" . }}-data
+      {{- end }}

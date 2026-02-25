@@ -10,6 +10,7 @@ from auralith_pipeline.sources.data_sources import (
     LocalFileSource,
     create_source,
 )
+from auralith_pipeline.sources.video import VideoFrameSampler, VideoSource
 
 __all__ = [
     "DataSource",
@@ -17,6 +18,8 @@ __all__ = [
     "HuggingFaceSource",
     "LocalFileSource",
     "JSONLSource",
+    "VideoSource",
+    "VideoFrameSampler",
     "DATASET_REGISTRY",
     "DEPRECATED_DATASETS",
     "create_source",
