@@ -4,11 +4,9 @@ import json
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from auralith_pipeline.security.audit import PrivacyAuditLogger
 from auralith_pipeline.security.data_sanitizer import DataSanitizer
-from auralith_pipeline.security.pii_scrubber import PIIScrubber, ScrubResult
+from auralith_pipeline.security.pii_scrubber import PIIScrubber
 from auralith_pipeline.security.privacy_config import (
     GLOBAL_STRICT_POLICY,
     PIICategory,

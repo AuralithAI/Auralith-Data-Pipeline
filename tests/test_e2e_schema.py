@@ -29,8 +29,8 @@ class TestSafeTensorsSchema:
 
     def test_shard_writer_produces_all_tensors(self):
         """Shards must contain input_ids, attention_mask, modality_mask, labels."""
-        from auralith_pipeline.sharding.shard_writer import ShardWriter
         from auralith_pipeline.config.pipeline_config import ShardConfig
+        from auralith_pipeline.sharding.shard_writer import ShardWriter
         from auralith_pipeline.tokenization.tokenizer import TokenizedSample
 
         with tempfile.TemporaryDirectory() as tmpdir:

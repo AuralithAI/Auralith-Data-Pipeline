@@ -771,7 +771,7 @@ class MultimodalTokenizer:
         # Build causal LM labels: shift input_ids, mask special tokens with -100
         special_ids = set(self.text_tokenizer.SPECIAL_TOKENS.values())
         labels = []
-        for i, tid in enumerate(text_tokens):
+        for tid in text_tokens:
             if tid in special_ids:
                 labels.append(-100)  # Ignore special tokens in loss
             else:

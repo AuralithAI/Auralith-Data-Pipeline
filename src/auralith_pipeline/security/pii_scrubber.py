@@ -239,7 +239,7 @@ class PIIScrubber:
 
         # Add user-supplied extra patterns
         if extra_patterns:
-            for regex, tag in extra_patterns.items():
+            for regex, _tag in extra_patterns.items():
                 self._compiled_patterns.append(
                     (re.compile(regex, re.IGNORECASE), PIICategory.NATIONAL_ID_GENERIC)
                 )
@@ -251,7 +251,7 @@ class PIIScrubber:
             "total_redactions": 0,
         }
         # Per-category counts
-        self.category_stats: dict[PIICategory, int] = {c: 0 for c in PIICategory}
+        self.category_stats: dict[PIICategory, int] = dict.fromkeys(PIICategory, 0)
 
     def _make_replacement(self, category: PIICategory, matched_text: str) -> str:
         """Create the replacement string based on config."""

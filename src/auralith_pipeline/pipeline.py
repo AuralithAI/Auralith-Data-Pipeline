@@ -464,7 +464,7 @@ class Pipeline:
         """Finalize tracking: metrics, lineage, data card."""
         if self._experiment_tracker:
             self._experiment_tracker.log_metrics(
-                {k: float(v) for k, v in stats.to_dict().items() if isinstance(v, (int, float))}
+                {k: float(v) for k, v in stats.to_dict().items() if isinstance(v, int | float)}
             )
             self._experiment_tracker.end_run(status="success")
 

@@ -73,7 +73,7 @@ class PerplexityFilter(QualityScorer):
             return
 
         try:
-            import torch
+            import torch  # noqa: F401
             from transformers import AutoModelForCausalLM, AutoTokenizer
 
             logger.info(f"Loading perplexity model: {self.model_name}")
@@ -252,7 +252,7 @@ class LLMJudge(QualityScorer):
         if len(sentences) > 1:
             lengths = [len(s.split()) for s in sentences]
             avg_len = sum(lengths) / len(lengths)
-            variance = sum((l - avg_len) ** 2 for l in lengths) / len(lengths)
+            variance = sum((length - avg_len) ** 2 for length in lengths) / len(lengths)
             coherence = min(1.0, 1.0 / (1.0 + variance / 100))
         else:
             coherence = 0.5

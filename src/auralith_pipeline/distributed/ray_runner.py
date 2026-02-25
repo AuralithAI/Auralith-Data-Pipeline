@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 def _check_ray() -> bool:
     """Check if Ray is available."""
     try:
-        import ray
+        import ray  # noqa: F401
 
         return True
     except ImportError:

@@ -6,7 +6,6 @@ for sub-linear search.
 
 import logging
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 
@@ -132,7 +131,7 @@ class EmbeddingDeduplicator:
             return False
 
         # Need enough vectors to train IVF
-        import faiss
+        import faiss  # noqa: F401
 
         if hasattr(self._index, "is_trained") and not self._index.is_trained:
             if self._count < self.nlist:
@@ -169,7 +168,7 @@ class EmbeddingDeduplicator:
         if not hasattr(self, "_staging") or not self._staging:
             return
 
-        import faiss
+        import faiss  # noqa: F401
 
         all_vecs = np.concatenate(self._staging, axis=0)
         self._index.train(all_vecs)

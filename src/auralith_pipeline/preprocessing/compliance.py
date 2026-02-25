@@ -93,7 +93,7 @@ class LicenseDetector:
         if allow_copyleft:
             self.allowed |= COPYLEFT_LICENSES
         if custom_allowed:
-            self.allowed |= {l.lower() for l in custom_allowed}
+            self.allowed |= {lic.lower() for lic in custom_allowed}
 
         self.stats = {
             "total_checked": 0,
@@ -183,7 +183,6 @@ class AuditLogger:
         Args:
             log_path: Path to audit log file (JSONL). If None, uses Python logger.
         """
-        import json
         from pathlib import Path
 
         self.log_path = Path(log_path) if log_path else None
