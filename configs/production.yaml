@@ -35,7 +35,7 @@ sources:
   # Video sources
   # - type: video
   #   path: ./data/videos
-  #   caption_path: ./data/videos/captions.jsonl
+  #   caption_file: ./data/videos/captions.jsonl
   #   frame_strategy: uniform
   #   max_frames: 32
 
