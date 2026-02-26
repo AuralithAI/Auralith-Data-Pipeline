@@ -187,6 +187,11 @@ class PipelineConfig:
     streaming: bool = True
     max_samples: int | None = None
 
+    # Reproducibility & fault-tolerance
+    seed: int = 42
+    checkpoint_every: int = 10_000   # save resume checkpoint every N accepted samples
+    checkpoint_path: str | None = None  # defaults to {output_dir}/.pipeline_checkpoint.json
+
     # Sub-configs
     quality: QualityConfig = field(default_factory=QualityConfig)
     advanced_quality: AdvancedQualityConfig = field(default_factory=AdvancedQualityConfig)
@@ -199,6 +204,38 @@ class PipelineConfig:
     compliance: ComplianceConfig = field(default_factory=ComplianceConfig)
     security: SecurityConfig = field(default_factory=SecurityConfig)
     distributed: DistributedConfig = field(default_factory=DistributedConfig)
+
+    def __post_init__(self):
+        """Validate that token ID spaces for each modality never overlap."""
+        max_text_id = self.tokenization.vocab_size - 1
+        image_offset = 100_000
+        audio_offset = 200_000
+        video_offset = self.video.video_token_offset  # 300_000 default
+
+        img_end = image_offset + 1024 - 1   # image codebook_size = 1024
+        audio_end = audio_offset + 512 - 1  # audio codebook_size = 512
+
+        if max_text_id >= image_offset:
+            raise ValueError(
+                f"vocab_size={self.tokenization.vocab_size} overlaps image token space "
+                f"(starts at {image_offset}). Reduce vocab_size or increase image_token_offset."
+            )
+        if img_end >= audio_offset:
+            raise ValueError(
+                f"Image tokens (up to {img_end}) overlap audio token space (starts at {audio_offset})."
+            )
+        if audio_end >= video_offset:
+            raise ValueError(
+                f"Audio tokens (up to {audio_end}) overlap video token space (starts at {video_offset})."
+            )
+        if self.tokenization.max_length != self.sharding.sequence_length:
+            # Warn rather than hard-error; user might intentionally differ
+            import logging
+            logging.getLogger(__name__).warning(
+                f"tokenization.max_length ({self.tokenization.max_length}) != "
+                f"sharding.sequence_length ({self.sharding.sequence_length}). "
+                "Shard sequences will use sharding.sequence_length for padding."
+            )
 
     @classmethod
     def from_yaml(cls, path: str) -> "PipelineConfig":

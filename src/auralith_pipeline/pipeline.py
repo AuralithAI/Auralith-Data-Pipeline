@@ -1,11 +1,17 @@
 """Main Pipeline class that orchestrates the entire data processing workflow."""
 
+import itertools
+import json
 import logging
+import random
 import time
+from collections import deque
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+import numpy as np
 
 from auralith_pipeline.config.pipeline_config import PipelineConfig
 from auralith_pipeline.preprocessing.preprocessor import DataPreprocessor
@@ -90,7 +96,7 @@ class Pipeline:
 
     def __init__(self, config: PipelineConfig | None = None):
         self.config = config or PipelineConfig()
-        self._sources: list[DataSource] = []
+        self._sources: list[tuple[DataSource, float]] = []  # (source, weight)
         self._preprocessor: DataPreprocessor | None = None
         self._tokenizer: TokenizationPipeline | None = None
         self._shard_writer: ShardWriter | None = None
@@ -105,10 +111,16 @@ class Pipeline:
         self._data_sanitizer: Any = None
         self._privacy_audit: Any = None
 
-    def add_source(self, source: DataSource):
-        """Add a data source to the pipeline."""
-        self._sources.append(source)
-        logger.info(f"Added source: {source.name}")
+    def add_source(self, source: DataSource, weight: float = 1.0) -> None:
+        """Add a data source to the pipeline.
+
+        Args:
+            source: The data source to add.
+            weight: Relative sampling weight used for round-robin interleaving
+                    when multiple sources are present.  Default 1.0 (equal share).
+        """
+        self._sources.append((source, weight))
+        logger.info(f"Added source: {source.name} (weight={weight})")
 
     def _setup_components(self):
         """Initialize pipeline components."""
@@ -271,24 +283,78 @@ class Pipeline:
         )
 
     def _iterate_sources(self) -> Iterator[DataSample]:
-        """Iterate over all sources."""
-        for source in self._sources:
+        """Iterate over all sources using weighted round-robin interleaving.
+
+        Each source is assigned a fractional credit equal to its normalised weight.
+        At every step the source with the highest accumulated credit is chosen,
+        one sample is yielded from it, and its credit is decremented by 1.
+        Sources are removed from rotation as they are exhausted.
+        """
+        if not self._sources:
+            return
+
+        if len(self._sources) == 1:
+            source, _ = self._sources[0]
             logger.info(f"Processing source: {source.name}")
             yield from source
+            return
 
-    def _apply_advanced_filters(
-        self,
-        sample: DataSample,
-        stats: PipelineStats,
-    ) -> bool:
-        """Apply security, advanced quality, and compliance filters. Returns True if sample passes."""
+        total_weight = sum(w for _, w in self._sources)
+        norm_weights = [w / total_weight for _, w in self._sources]
+        iterators = [iter(src) for src, _ in self._sources]
+        exhausted = [False] * len(self._sources)
+        rr_credits = [0.0] * len(self._sources)
 
-        # ── Security layer: PII scrubbing (runs first) ──
+        for src, _ in self._sources:
+            logger.info(f"Processing source: {src.name}")
+
+        while not all(exhausted):
+            for i, w in enumerate(norm_weights):
+                if not exhausted[i]:
+                    rr_credits[i] += w
+
+            active = [i for i in range(len(self._sources)) if not exhausted[i]]
+            if not active:
+                break
+            best = max(active, key=lambda i: rr_credits[i])
+
+            try:
+                yield next(iterators[best])
+                rr_credits[best] -= 1.0
+            except StopIteration:
+                exhausted[best] = True
+
+    # ------------------------------------------------------------------ #
+    #  Per-sample filter stages (extracted to keep run() simple)          #
+    # ------------------------------------------------------------------ #
+
+    def _pii_rescan_blocked(self, sample: DataSample) -> bool:
+        """Fail-safe PII rescan after scrubbing. Returns True when sample must be blocked."""
+        if not (self._pii_scrubber and self.config.security.fail_on_pii):
+            return False
+        if not self._pii_scrubber.has_pii(sample.content):
+            return False
+        logger.warning(f"PII persists after scrub — blocking {sample.source}")
+        if self._privacy_audit:
+            self._privacy_audit.log_blocked(
+                sample_id=sample.metadata.get("id", f"s_{id(sample)}"),
+                source=sample.source,
+                reason="pii_rescan_failed",
+            )
+        return True
+
+    def _stage_security(
+        self, sample: DataSample, stats: PipelineStats
+    ) -> tuple[DataSample, bool]:
+        """Stage 3 — PII scrubbing + secrets sanitisation.
+
+        Returns (sample, passed). Sample content is mutated in-place when PII is found.
+        """
         if self._pii_scrubber:
             scrub_result = self._pii_scrubber.scrub(sample.content)
             if scrub_result.pii_found:
                 sample.content = scrub_result.cleaned_text
-                stats.pii_removed += 1
+                stats.pii_removed += scrub_result.count
                 if self._privacy_audit:
                     self._privacy_audit.log_redaction(
                         sample_id=sample.metadata.get("id", f"s_{id(sample)}"),
@@ -297,25 +363,36 @@ class Pipeline:
                         redaction_count=scrub_result.count,
                     )
 
-        # ── Security layer: credential / secret sanitization ──
         if self._data_sanitizer:
             sanitize_result = self._data_sanitizer.sanitize(sample.content)
             if sanitize_result.had_issues:
                 sample.content = sanitize_result.cleaned_text
 
-        # ── Security rescan: fail-safe check after all processing ──
-        if self._pii_scrubber and self.config.security.fail_on_pii:
-            if self._pii_scrubber.has_pii(sample.content):
-                logger.warning(f"PII still found after scrubbing — blocking sample {sample.source}")
-                if self._privacy_audit:
-                    self._privacy_audit.log_blocked(
-                        sample_id=sample.metadata.get("id", f"s_{id(sample)}"),
-                        source=sample.source,
-                        reason="pii_rescan_failed",
-                    )
-                return False
+        return sample, not self._pii_rescan_blocked(sample)
 
-        # License check for code samples
+    def _stage_embedding_dedup(self, sample: DataSample, stats: PipelineStats) -> bool:
+        """Stage 4 — FAISS embedding dedup. Returns True when sample is a duplicate."""
+        if self._embedding_dedup and self._embedding_dedup.is_duplicate(sample.content):
+            stats.embedding_dedup_removed += 1
+            return True
+        return False
+
+    def _stage_advanced_quality(self, sample: DataSample, stats: PipelineStats) -> bool:
+        """Stage 5 — Perplexity filter + LLM judge. Returns True when sample passes."""
+        if not self._advanced_quality:
+            return True
+        prev_ppl = self._advanced_quality.stats["failed_perplexity"]
+        prev_judge = self._advanced_quality.stats["failed_llm_judge"]
+        passed, _ = self._advanced_quality.evaluate(sample)
+        if not passed:
+            if self._advanced_quality.stats["failed_perplexity"] > prev_ppl:
+                stats.perplexity_filtered += 1
+            if self._advanced_quality.stats["failed_llm_judge"] > prev_judge:
+                stats.llm_judge_filtered += 1
+        return passed
+
+    def _stage_compliance(self, sample: DataSample, stats: PipelineStats) -> bool:
+        """Stage 6 — Licence detection. Returns True when sample is allowed."""
         if self._license_detector and getattr(sample, "modality", None) == "code":
             if not self._license_detector.is_allowed(sample):
                 stats.license_blocked += 1
@@ -327,138 +404,91 @@ class Pipeline:
                         details={"license": sample.metadata.get("detected_license")},
                     )
                 return False
-
-        # Advanced quality (perplexity + LLM judge)
-        if self._advanced_quality:
-            prev_ppl = self._advanced_quality.stats["failed_perplexity"]
-            prev_judge = self._advanced_quality.stats["failed_llm_judge"]
-            passed, _scores = self._advanced_quality.evaluate(sample)
-            if not passed:
-                if self._advanced_quality.stats["failed_perplexity"] > prev_ppl:
-                    stats.perplexity_filtered += 1
-                if self._advanced_quality.stats["failed_llm_judge"] > prev_judge:
-                    stats.llm_judge_filtered += 1
-                return False
-
-        # Embedding dedup
-        if self._embedding_dedup:
-            if self._embedding_dedup.is_duplicate(sample.content):
-                stats.embedding_dedup_removed += 1
-                return False
-
         return True
 
-    def run(
-        self,
-        max_samples: int | None = None,
-        progress_callback: Callable[[int], None] | None = None,
-    ) -> PipelineStats:
-        """Run the pipeline."""
-        start_time = time.time()
-        stats = PipelineStats()
+    def _tokenize_and_shard(
+        self, sample: DataSample, lineage_record: Any, stats: PipelineStats
+    ) -> int:
+        """Tokenise one sample and write to shard. Returns number of tokens added."""
+        assert self._tokenizer is not None
+        assert self._shard_writer is not None
+        added = 0
+        for tokenized in self._tokenizer.process(sample.content, sample.metadata):
+            self._shard_writer.add_sample(tokenized)
+            added += tokenized.length
+            stats.samples_tokenized += 1
+            if lineage_record is not None:
+                previous = getattr(lineage_record, "token_count", 0) or 0
+                lineage_record.token_count = previous + tokenized.length
+        return added
 
-        # Override max_samples from config if provided
-        max_samples = max_samples or self.config.max_samples
+    def _run_one_sample(
+        self, raw_sample: DataSample, stats: PipelineStats, sample_idx: int
+    ) -> tuple[bool, int]:
+        """Run all 6 filter stages + tokenise for a single raw sample.
 
-        # Setup components
-        self._setup_components()
+        Returns (accepted, tokens_added). tokens_added is 0 when rejected.
+        """
+        assert self._preprocessor is not None
 
-        logger.info(f"Starting pipeline: {self.config.name}")
-        logger.info(f"Output directory: {self.config.output_dir}")
+        # Stage 1+2: normalise + basic quality
+        processed = list(self._preprocessor.process(iter([raw_sample])))
+        if not processed:
+            return False, 0
+        sample = processed[0]
 
-        # Process samples
-        sample_count = 0
-        token_count = 0
+        # Stage 3: security
+        sample, security_ok = self._stage_security(sample, stats)
+        if not security_ok:
+            return False, 0
 
-        try:
-            # Create sample iterator
-            samples = self._iterate_sources()
+        # Stage 4: embedding dedup
+        if self._stage_embedding_dedup(sample, stats):
+            return False, 0
 
-            # Apply preprocessing
-            if self.config.deduplicate or self.config.quality_filter or self.config.remove_pii:
-                samples = self._preprocessor.process(samples)
+        # Stage 5: advanced quality
+        if not self._stage_advanced_quality(sample, stats):
+            return False, 0
 
-            # Process each sample
-            for sample in samples:
-                if max_samples and sample_count >= max_samples:
-                    break
+        # Stage 6: compliance
+        if not self._stage_compliance(sample, stats):
+            return False, 0
 
-                stats.total_samples += 1
+        # Passed all filters — tokenise and shard
+        modality = sample.modality
+        stats.modalities[modality] = stats.modalities.get(modality, 0) + 1
 
-                # advanced filters
-                if not self._apply_advanced_filters(sample, stats):
-                    continue
+        lineage_record = None
+        if self._lineage_tracker:
+            lineage_record = self._lineage_tracker.create_record(
+                source=sample.source, modality=modality
+            )
 
-                # Track modality
-                modality = sample.modality
-                stats.modalities[modality] = stats.modalities.get(modality, 0) + 1
+        tokens = self._tokenize_and_shard(sample, lineage_record, stats)
 
-                # Lineage record
-                lineage_record = None
-                if self._lineage_tracker:
-                    lineage_record = self._lineage_tracker.create_record(
-                        source=sample.source,
-                        modality=modality,
-                    )
+        if self._audit_logger:
+            self._audit_logger.log(
+                sample_id=sample.metadata.get("id", f"sample_{sample_idx}"),
+                action="accept",
+                reason="passed_all_filters",
+            )
 
-                # Tokenize
-                for tokenized in self._tokenizer.process(sample.content, sample.metadata):
-                    self._shard_writer.add_sample(tokenized)
-                    token_count += tokenized.length
-                    stats.samples_tokenized += 1
+        return True, tokens
 
-                    if lineage_record:
-                        previous_count = getattr(lineage_record, "token_count", 0) or 0
-                        lineage_record.token_count = previous_count + tokenized.length
+    def _periodic_checkpoint(
+        self, n_accepted: int, token_count: int, raw_total: int
+    ) -> None:
+        """Save checkpoint and emit metrics every checkpoint_every accepted samples."""
+        self._save_checkpoint(n_accepted, raw_total)
+        logger.info(f"Processed {format_number(n_accepted)} samples…")
+        if self._experiment_tracker:
+            self._experiment_tracker.log_metrics(
+                {"samples_processed": n_accepted, "tokens": token_count},
+                step=n_accepted,
+            )
 
-                # Audit log acceptance
-                if self._audit_logger:
-                    self._audit_logger.log(
-                        sample_id=sample.metadata.get("id", f"sample_{sample_count}"),
-                        action="accept",
-                        reason="passed_all_filters",
-                    )
-
-                sample_count += 1
-
-                # Progress callback
-                if progress_callback and sample_count % 1000 == 0:
-                    progress_callback(sample_count)
-
-                # Log progress + metrics
-                if sample_count % 10000 == 0:
-                    logger.info(f"Processed {format_number(sample_count)} samples...")
-                    if self._experiment_tracker:
-                        self._experiment_tracker.log_metrics(
-                            {"samples_processed": sample_count, "tokens": token_count},
-                            step=sample_count,
-                        )
-
-            # Finalize shards
-            shard_index = self._shard_writer.finalize()
-
-            # Update stats
-            stats.samples_after_filter = sample_count
-            stats.total_tokens = token_count
-            stats.num_shards = shard_index.total_shards
-            stats.total_size_bytes = shard_index.total_size_bytes
-
-            if self._preprocessor:
-                stats.duplicates_removed = self._preprocessor.stats["duplicates_removed"]
-                stats.pii_removed += self._preprocessor.stats["pii_removed"]
-
-        except Exception as e:
-            logger.error(f"Pipeline failed: {e}")
-            if self._experiment_tracker:
-                self._experiment_tracker.end_run(status="failed")
-            raise
-
-        stats.elapsed_time_seconds = time.time() - start_time
-
-        # ------- finalize tracking -------
-        self._finalize_tracking(stats)
-
-        # ------- Security: flush privacy audit -------
+    def _flush_security_logs(self) -> None:
+        """Close and log security audit outputs at pipeline end."""
         if self._privacy_audit:
             self._privacy_audit.close()
             logger.info(f"Privacy audit: {self._privacy_audit.summary()}")
@@ -467,8 +497,139 @@ class Pipeline:
         if self._data_sanitizer:
             logger.info(f"Data sanitizer: {self._data_sanitizer.summary()}")
 
-        logger.info(stats.summary())
+    # ------------------------------------------------------------------ #
+    #  Checkpoint helpers                                                  #
+    # ------------------------------------------------------------------ #
 
+    def _checkpoint_path(self) -> Path:
+        return Path(
+            self.config.checkpoint_path
+            or Path(self.config.output_dir) / ".pipeline_checkpoint.json"
+        )
+
+    def _save_checkpoint(self, samples_accepted: int, raw_total: int) -> None:
+        rng_state = np.random.get_state()  # tuple (str, ndarray, int, int, float)
+        ckpt = {
+            "samples_accepted": samples_accepted,
+            "raw_total": raw_total,
+            "seed": self.config.seed,
+            "numpy_rng_state": rng_state[1].tolist(),  # type: ignore[index]
+        }
+        path = self._checkpoint_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(ckpt))
+        logger.debug(f"Checkpoint saved ({samples_accepted} accepted so far)")
+
+    def _load_checkpoint(self) -> dict | None:
+        path = self._checkpoint_path()
+        if path.exists():
+            try:
+                ckpt = json.loads(path.read_text())
+                logger.info(
+                    f"Resuming from checkpoint: {ckpt['samples_accepted']} samples already accepted"
+                )
+                return ckpt
+            except Exception as e:
+                logger.warning(f"Could not load checkpoint, starting fresh: {e}")
+        return None
+
+    def _restore_rng_state(self, checkpoint: dict) -> None:
+        """Best-effort restoration of numpy RNG state from a checkpoint dict."""
+        try:
+            state = list(np.random.get_state())   # mutable copy of the tuple
+            state[1] = np.array(checkpoint["numpy_rng_state"], dtype=np.uint32)  # type: ignore[index]
+            np.random.set_state(tuple(state))      # type: ignore[arg-type]
+        except Exception as exc:
+            logger.warning(f"RNG state restoration skipped: {exc}")
+
+    def _init_from_checkpoint(self) -> tuple[int, int]:
+        """Load checkpoint if present, restore RNG, return (skip_count, samples_accepted)."""
+        checkpoint = self._load_checkpoint()
+        if not checkpoint:
+            return 0, 0
+        self._restore_rng_state(checkpoint)
+        return checkpoint["raw_total"], checkpoint["samples_accepted"]
+
+    # ------------------------------------------------------------------ #
+    #  Main run                                                            #
+    # ------------------------------------------------------------------ #
+
+    def run(
+        self,
+        max_samples: int | None = None,
+        progress_callback: Callable[[int], None] | None = None,
+    ) -> PipelineStats:
+        """Run the pipeline.
+
+        Filter execution order (per sample):
+          Stage 1+2 — Normalise + basic quality filter  (preprocessor)
+          Stage 3   — Security scrubbing  (PII + secrets, before dedup fingerprint)
+          Stage 4   — Embedding dedup    (FAISS)
+          Stage 5   — Advanced quality   (perplexity, LLM judge)
+          Stage 6   — Compliance         (licence detection)
+          → Tokenise → Shard
+        """
+        start_time = time.time()
+        stats = PipelineStats()
+
+        np.random.seed(self.config.seed)
+        random.seed(self.config.seed)
+
+        max_samples = max_samples or self.config.max_samples
+
+        skip_count, samples_accepted = self._init_from_checkpoint()
+
+        self._setup_components()
+        assert self._preprocessor is not None, "_setup_components must initialise _preprocessor"
+
+        logger.info(f"Starting pipeline: {self.config.name}")
+        logger.info(f"Output: {self.config.output_dir} | resume offset: {skip_count} samples")
+
+        token_count = 0
+
+        try:
+            raw_iter = self._iterate_sources()
+            deque(itertools.islice(raw_iter, skip_count), maxlen=0)
+
+            for raw_sample in raw_iter:
+                if max_samples and samples_accepted >= max_samples:
+                    break
+
+                stats.total_samples += 1
+                accepted, tokens = self._run_one_sample(raw_sample, stats, samples_accepted)
+                if not accepted:
+                    continue
+
+                token_count += tokens
+                samples_accepted += 1
+
+                if progress_callback and samples_accepted % 1000 == 0:
+                    progress_callback(samples_accepted)
+
+                if samples_accepted % self.config.checkpoint_every == 0:
+                    self._periodic_checkpoint(samples_accepted, token_count, stats.total_samples)
+
+            assert self._shard_writer is not None
+            shard_index = self._shard_writer.finalize()
+
+            stats.samples_after_filter = samples_accepted
+            stats.total_tokens = token_count
+            stats.num_shards = shard_index.total_shards
+            stats.total_size_bytes = shard_index.total_size_bytes
+            stats.duplicates_removed = self._preprocessor.stats.get("duplicates_removed", 0)
+            stats.pii_removed += self._preprocessor.stats.get("pii_removed", 0)
+            self._checkpoint_path().unlink(missing_ok=True)
+
+        except Exception as e:
+            logger.error(f"Pipeline failed: {e}")
+            if self._experiment_tracker:
+                self._experiment_tracker.end_run(status="failed")
+            raise
+
+        stats.elapsed_time_seconds = time.time() - start_time
+        self._finalize_tracking(stats)
+        self._flush_security_logs()
+        logger.info(stats.summary())
         return stats
 
     def _finalize_tracking(self, stats: PipelineStats) -> None:

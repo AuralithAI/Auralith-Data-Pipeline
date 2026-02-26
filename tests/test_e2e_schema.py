@@ -1,7 +1,7 @@
 """End-to-end tests for Auralith Data Pipeline.
 
 Validates:
-  • SafeTensors schema (input_ids, attention_mask, modality_mask, labels)
+  • SafeTensors schema (input_ids, attention_mask, modality_mask, targets)
   • Multimodal tokenization (text + image + audio + video tokens)
   • Quality pipeline (perplexity filter, LLM judge integration)
   • Compliance (license detection, audit logging)
@@ -10,14 +10,46 @@ Validates:
 """
 
 import json
+import os
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from auralith_pipeline.config.pipeline_config import PipelineConfig
-from auralith_pipeline.sources.data_sources import DataSample
+from auralith_pipeline.sources.data_sources import DataSample, DataSource
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+class _SyntheticSource(DataSource):
+    """In-memory data source for unit/integration tests (no network required)."""
+
+    def __init__(self, n: int = 100, text_len: int = 300):
+        self._n = n
+        self._text_len = text_len
+
+    def __iter__(self) -> Iterator[DataSample]:
+        base = "The quick brown fox jumps over the lazy dog. "
+        for i in range(self._n):
+            content = f"Sample {i}: " + base * (self._text_len // len(base) + 1)
+            yield DataSample(
+                content=content[: self._text_len],
+                source="synthetic",
+                metadata={"id": f"s_{i}"},
+            )
+
+    def __len__(self) -> int:
+        return self._n
+
+    @property
+    def name(self) -> str:
+        return "synthetic"
 
 # ===========================================================================
 # Tensor Schema Tests
@@ -28,7 +60,7 @@ class TestSafeTensorsSchema:
     """Verify the RT-DLM-compatible SafeTensors schema."""
 
     def test_shard_writer_produces_all_tensors(self):
-        """Shards must contain input_ids, attention_mask, modality_mask, labels."""
+        """Shards must contain input_ids, attention_mask, modality_mask, targets (not labels)."""
         from auralith_pipeline.config.pipeline_config import ShardConfig
         from auralith_pipeline.sharding.shard_writer import ShardWriter
         from auralith_pipeline.tokenization.tokenizer import TokenizedSample
@@ -48,50 +80,35 @@ class TestSafeTensorsSchema:
                     attention_mask=[1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
                     metadata={"source": "test"},
                     modality_mask=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                    labels=[
-                        1,
-                        2,
-                        3,
-                        4,
-                        5,
-                        -100,
-                        -100,
-                        -100,
-                        -100,
-                        -100,
-                        -100,
-                        -100,
-                        -100,
-                        -100,
-                        -100,
-                        -100,
-                    ],
                 )
                 writer.add_sample(sample)
 
             index = writer.finalize()
             assert index.total_shards >= 1
 
-            # Load the shard and verify tensors
             from safetensors.numpy import load_file
 
             shard_path = Path(tmpdir) / "shard_00000.safetensors"
-            if shard_path.exists():
-                tensors = load_file(str(shard_path))
-                assert "input_ids" in tensors
-                assert "attention_mask" in tensors
-                assert "modality_mask" in tensors
-                assert "labels" in tensors
+            assert shard_path.exists(), "No shard file was created"
+            tensors = load_file(str(shard_path))
 
-                assert tensors["input_ids"].dtype == np.int32
-                assert tensors["modality_mask"].dtype == np.uint8
-                assert tensors["labels"].dtype == np.int32
-                assert tensors["attention_mask"].dtype == np.int32
+            # Schema must use "targets", not the old PyTorch "labels" key
+            assert set(tensors.keys()) == {"input_ids", "attention_mask", "modality_mask", "targets"}
+            assert "labels" not in tensors
 
-                # Shapes match
-                assert tensors["input_ids"].shape == tensors["attention_mask"].shape
-                assert tensors["input_ids"].shape == tensors["modality_mask"].shape
-                assert tensors["input_ids"].shape == tensors["labels"].shape
+            # Correct dtypes (schema v2)
+            assert tensors["input_ids"].dtype == np.int32
+            assert tensors["targets"].dtype == np.int32
+            assert tensors["attention_mask"].dtype == np.uint8   # 4× smaller than int32
+            assert tensors["modality_mask"].dtype == np.uint8
+
+            # All tensors share (N, seq_len) shape
+            assert tensors["input_ids"].shape == tensors["targets"].shape
+            assert tensors["input_ids"].shape == tensors["attention_mask"].shape
+            assert tensors["input_ids"].shape == tensors["modality_mask"].shape
+
+            # Right-shift relationship: targets[:, :-1] == input_ids[:, 1:]
+            assert np.all(tensors["targets"][:, :-1] == tensors["input_ids"][:, 1:])
 
     def test_tokenized_sample_defaults(self):
         """TokenizedSample should auto-fill modality_mask and labels."""
@@ -517,6 +534,117 @@ class TestPipelineE2E:
         assert "Perplexity filtered" in summary
         assert "License blocked" in summary
         assert "Modalities" in summary
+
+
+# ===========================================================================
+# Full Pipeline E2E (schema contract tests)
+# ===========================================================================
+
+
+class TestFullPipelineE2E:
+    """Run the complete pipeline stack and assert the RT-DLM schema contract."""
+
+    def test_full_pipeline_synthetic_100_samples(self):
+        """E2E: 100 in-memory synthetic samples → shard → validate schema."""
+        from safetensors.numpy import load_file
+
+        from auralith_pipeline.pipeline import Pipeline
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = PipelineConfig.from_preset("small")
+            config.output_dir = tmpdir
+            config.sharding.sequence_length = 64
+            config.tokenization.max_length = 64
+            config.max_samples = 20
+            # Disable heavy optional stages so the test stays fast
+            config.deduplicate = False
+            config.quality_filter = False
+            config.remove_pii = False
+
+            pipeline = Pipeline(config)
+            pipeline.add_source(_SyntheticSource(n=50, text_len=300))
+            stats = pipeline.run()
+
+            assert stats.samples_after_filter > 0, "Pipeline accepted no samples"
+
+            shards = sorted(Path(tmpdir).glob("*.safetensors"))
+            assert len(shards) > 0, "No shard files were written"
+
+            shard = load_file(str(shards[0]))
+
+            # Schema contract
+            assert set(shard.keys()) >= {"input_ids", "attention_mask", "modality_mask", "targets"}
+            assert "labels" not in shard, "Old 'labels' key must not appear (use 'targets')"
+
+            # Correct dtypes
+            assert shard["input_ids"].dtype == np.int32
+            assert shard["targets"].dtype == np.int32
+            assert shard["attention_mask"].dtype == np.uint8
+            assert shard["modality_mask"].dtype == np.uint8
+
+            # Fixed-length padding — all tensors share the same shape
+            n, seq_len = shard["input_ids"].shape
+            assert seq_len == 64
+            for key in ("targets", "attention_mask", "modality_mask"):
+                assert shard[key].shape == (n, seq_len), f"{key} shape mismatch"
+
+            # Right-shift relationship: targets[:, :-1] == input_ids[:, 1:]
+            assert np.all(shard["targets"][:, :-1] == shard["input_ids"][:, 1:])
+
+            # Token IDs in valid range
+            assert int(shard["input_ids"].min()) >= 0
+            assert int(shard["input_ids"].max()) < config.tokenization.vocab_size
+
+    @pytest.mark.skipif(
+        not os.getenv("AURALITH_INTEGRATION_TEST"),
+        reason="Set AURALITH_INTEGRATION_TEST=1 to run network integration tests",
+    )
+    def test_full_pipeline_wikipedia_100_samples(self):
+        """E2E (network): 100 real Wikipedia samples → shard → validate schema."""
+        from safetensors.numpy import load_file
+
+        from auralith_pipeline.pipeline import Pipeline
+        from auralith_pipeline.sources.data_sources import HuggingFaceSource
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = PipelineConfig.from_preset("small")
+            config.output_dir = tmpdir
+            config.sharding.sequence_length = 512
+            config.tokenization.max_length = 512
+            config.max_samples = 100
+            config.deduplicate = False
+            config.quality_filter = False
+            config.remove_pii = False
+
+            source = HuggingFaceSource(
+                path="wikipedia",
+                name="20231101.en",
+                split="train",
+                text_column="text",
+                streaming=True,
+                max_samples=100,
+            )
+
+            pipeline = Pipeline(config)
+            pipeline.add_source(source)
+            stats = pipeline.run()
+
+            assert stats.samples_after_filter > 0
+
+            shards = sorted(Path(tmpdir).glob("*.safetensors"))
+            assert len(shards) > 0
+
+            shard = load_file(str(shards[0]))
+
+            assert set(shard.keys()) >= {"input_ids", "attention_mask", "modality_mask", "targets"}
+            assert "labels" not in shard
+            assert shard["input_ids"].dtype == np.int32
+            assert shard["targets"].dtype == np.int32
+            assert shard["attention_mask"].dtype == np.uint8
+            assert shard["modality_mask"].dtype == np.uint8
+            assert np.all(shard["targets"][:, :-1] == shard["input_ids"][:, 1:])
+            assert int(shard["input_ids"].min()) >= 0
+            assert int(shard["input_ids"].max()) < config.tokenization.vocab_size
 
 
 if __name__ == "__main__":

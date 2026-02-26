@@ -24,17 +24,31 @@ class VectorQuantizer:
     Converts continuous feature vectors to discrete codes via a learned codebook.
     """
 
-    def __init__(self, codebook_size: int = 1024, max_iters: int = 100):
+    def __init__(
+        self,
+        codebook_size: int = 1024,
+        max_iters: int = 100,
+        ema_decay: float = 0.99,
+        ema_epsilon: float = 1e-5,
+    ):
         """Initialize vector quantizer.
 
         Args:
             codebook_size: Number of discrete codes (vocabulary size for modality)
             max_iters: Maximum k-means iterations
+            ema_decay: EMA decay factor for codebook updates (prevents collapse)
+            ema_epsilon: Laplace smoothing constant to keep all codes alive
         """
         self.codebook_size = codebook_size
         self.max_iters = max_iters
+        self.ema_decay = ema_decay
+        self.ema_epsilon = ema_epsilon
         self.codebook: np.ndarray | None = None  # Shape: (codebook_size, feature_dim)
         self.feature_dim: int | None = None
+
+        # EMA accumulators (initialised after first train() call)
+        self._ema_cluster_size: np.ndarray | None = None  # (codebook_size,)
+        self._ema_embed_sum: np.ndarray | None = None      # (codebook_size, feature_dim)
 
     def train(self, features: np.ndarray, verbose: bool = True) -> None:
         """Train codebook via k-means clustering.
@@ -60,20 +74,18 @@ class VectorQuantizer:
         indices = np.random.choice(features.shape[0], self.codebook_size, replace=False)
         self.codebook = features[indices].copy()
 
-        # K-means iterations
+        # EMA accumulators: cluster_size tracks effective usage per code
+        self._ema_cluster_size = np.ones(self.codebook_size, dtype=np.float64)
+        self._ema_embed_sum = self.codebook.copy().astype(np.float64)
+
+        # K-means iterations with EMA centroid updates
         for iteration in range(self.max_iters):
-            # Assign each feature to nearest centroid
             distances = self._compute_distances(features)
             assignments = np.argmin(distances, axis=1)
 
-            # Update centroids
             old_codebook = self.codebook.copy()
-            for k in range(self.codebook_size):
-                mask = assignments == k
-                if mask.sum() > 0:
-                    self.codebook[k] = features[mask].mean(axis=0)
+            self._ema_update(features, assignments)
 
-            # Check convergence
             change = np.abs(self.codebook - old_codebook).max()
             if verbose and (iteration + 1) % 10 == 0:
                 logger.info(f"Iteration {iteration + 1}/{self.max_iters}, max change: {change:.6f}")
@@ -102,6 +114,44 @@ class VectorQuantizer:
 
         distances = features_sq + codebook_sq - 2 * cross_term
         return distances
+
+    def _ema_update(self, features: np.ndarray, assignments: np.ndarray) -> None:
+        """Update codebook via Exponential Moving Average — prevents codebook collapse.
+
+        Each iteration EMA-smooths both the cluster population count and the
+        sum of assigned embeddings, then recomputes centroids with Laplace
+        smoothing so that unused codes are kept alive.
+
+        Args:
+            features:    Shape (num_samples, feature_dim)
+            assignments: Shape (num_samples,) — index of nearest centroid per sample
+        """
+        assert self._ema_cluster_size is not None and self._ema_embed_sum is not None
+
+        # One-hot encoding: (num_samples, codebook_size)
+        one_hot = np.zeros((len(assignments), self.codebook_size), dtype=np.float64)
+        one_hot[np.arange(len(assignments)), assignments] = 1.0
+
+        batch_cluster_size = one_hot.sum(axis=0)          # (codebook_size,)
+        batch_embed_sum    = one_hot.T @ features.astype(np.float64)  # (codebook_size, feature_dim)
+
+        self._ema_cluster_size = (
+            self.ema_decay * self._ema_cluster_size
+            + (1.0 - self.ema_decay) * batch_cluster_size
+        )
+        self._ema_embed_sum = (
+            self.ema_decay * self._ema_embed_sum
+            + (1.0 - self.ema_decay) * batch_embed_sum
+        )
+
+        # Laplace smoothing: prevents any code from having a zero-count denominator
+        n = self._ema_cluster_size.sum()
+        smoothed = (
+            (self._ema_cluster_size + self.ema_epsilon)
+            / (n + self.codebook_size * self.ema_epsilon)
+            * n
+        )
+        self.codebook = (self._ema_embed_sum / smoothed[:, np.newaxis]).astype(np.float32)
 
     def encode(self, features: np.ndarray) -> np.ndarray:
         """Encode features to discrete codes.
@@ -235,17 +285,13 @@ class ImageTokenizer:
         Returns:
             Preprocessed image, shape (image_size, image_size, channels)
         """
-        # Resize (bilinear interpolation)
+        # Resize to target size using PIL LANCZOS (high-quality downsampling)
         if image.shape[:2] != (self.image_size, self.image_size):
-            # Simple resize using numpy (production: implement proper bilinear)
-            from scipy.ndimage import zoom
-
-            h, w = image.shape[:2]
-            zoom_factors = (self.image_size / h, self.image_size / w, 1)
-            image = zoom(image, zoom_factors, order=1)
-
-        # Normalize to [0, 1]
-        if image.max() > 1.0:
+            pil_img = Image.fromarray(image.astype(np.uint8))
+            pil_img = pil_img.resize((self.image_size, self.image_size), Image.Resampling.LANCZOS)
+            image = np.array(pil_img, dtype=np.float32) / 255.0
+        elif image.max() > 1.0:
+            # Already correct size but needs normalizing
             image = image.astype(np.float32) / 255.0
 
         # Ensure correct shape
@@ -412,6 +458,9 @@ class AudioTokenizer:
         # Vector quantizer
         self.vq = VectorQuantizer(codebook_size=codebook_size)
 
+        # Precompute mel filterbank — shape (n_mels, n_fft//2 + 1)
+        self._mel_filterbank: np.ndarray = self._build_mel_filterbank()
+
     def _load_audio_raw(self, audio_path: str | Path) -> np.ndarray:
         """Load audio from file.
 
@@ -444,55 +493,71 @@ class AudioTokenizer:
                 f"Supported: .npy, .wav, .flac, .ogg"
             )
 
+    def _build_mel_filterbank(self) -> np.ndarray:
+        """Build a real mel-scale triangular filterbank matrix.
+
+        Uses the formula:  mel = 2595 * log10(1 + hz / 700)
+        Returns filterbank of shape (n_mels, n_fft//2 + 1).
+        """
+        n_freqs = self.n_fft // 2 + 1
+        f_max = self.sample_rate / 2.0
+
+        mel_min = 2595.0 * np.log10(1.0 + 0.0 / 700.0)
+        mel_max = 2595.0 * np.log10(1.0 + f_max / 700.0)
+
+        # n_mels + 2 evenly spaced points on the mel axis, converted back to Hz
+        mel_points = np.linspace(mel_min, mel_max, self.n_mels + 2)
+        hz_points = 700.0 * (10.0 ** (mel_points / 2595.0) - 1.0)
+
+        # Map Hz → FFT bin indices
+        bin_points = np.floor((self.n_fft + 1) * hz_points / self.sample_rate).astype(int)
+        bin_points = np.clip(bin_points, 0, n_freqs - 1)
+
+        # Triangular filters — vectorized over frequency bins
+        k = np.arange(n_freqs, dtype=np.float32)
+        filterbank = np.zeros((self.n_mels, n_freqs), dtype=np.float32)
+        for m in range(1, self.n_mels + 1):
+            f_left   = bin_points[m - 1]
+            f_center = bin_points[m]
+            f_right  = bin_points[m + 1]
+            rising  = (k - f_left)  / max(f_center - f_left,  1)
+            falling = (f_right - k) / max(f_right  - f_center, 1)
+            filterbank[m - 1] = np.maximum(0.0, np.minimum(rising, falling))
+
+        return filterbank
+
     def _compute_spectrogram(self, waveform: np.ndarray) -> np.ndarray:
-        """Compute mel spectrogram from waveform using STFT.
+        """Compute log-mel spectrogram from waveform using STFT + mel filterbank.
 
         Args:
             waveform: Shape (num_samples,)
 
         Returns:
-            Spectrogram: Shape (n_mels, num_frames)
+            Log-mel spectrogram: Shape (n_mels, num_frames)
         """
-        # Ensure waveform is 1D
         if waveform.ndim > 1:
             waveform = waveform.flatten()
 
-        # Pad waveform if needed
         if len(waveform) < self.n_fft:
             waveform = np.pad(waveform, (0, self.n_fft - len(waveform)))
 
         num_frames = (len(waveform) - self.n_fft) // self.hop_length + 1
+        hann_window = np.hanning(self.n_fft).astype(np.float32)
 
-        # Compute STFT with proper windowing
-        hann_window = np.hanning(self.n_fft)
-        spectrogram = []
+        # Stack all windowed frames: (num_frames, n_fft)
+        frames = np.stack([
+            waveform[i * self.hop_length : i * self.hop_length + self.n_fft] * hann_window
+            for i in range(num_frames)
+        ])
 
-        for i in range(num_frames):
-            start = i * self.hop_length
-            frame = waveform[start : start + self.n_fft]
+        # Power spectrum: (num_frames, n_fft//2 + 1)
+        power = np.abs(np.fft.rfft(frames, axis=1).astype(np.complex64)) ** 2
 
-            # Apply Hann window
-            windowed_frame = frame * hann_window
+        # Apply mel filterbank: (n_mels, n_fft//2+1) @ (n_fft//2+1, num_frames)
+        mel_spec = self._mel_filterbank @ power.T   # (n_mels, num_frames)
 
-            # Compute FFT
-            fft = np.fft.rfft(windowed_frame)
-            magnitude = np.abs(fft)
-
-            # Convert power to dB scale
-            power = magnitude**2
-            power = np.maximum(power, 1e-10)  # Avoid log(0)
-
-            # Apply mel filterbank (simplified linear approximation)
-            # For production with librosa: librosa.feature.melspectrogram()
-            mel_bins = np.linspace(0, len(magnitude) - 1, self.n_mels, dtype=int)
-            mel_spec = power[mel_bins]
-
-            # Convert to log scale (dB)
-            mel_spec_db = 10 * np.log10(mel_spec + 1e-10)
-
-            spectrogram.append(mel_spec_db)
-
-        return np.array(spectrogram).T  # Shape: (n_mels, num_frames)
+        # Log scale (dB)
+        return 10.0 * np.log10(np.maximum(mel_spec, 1e-10))
 
     def _patchify_spectrogram(self, spectrogram: np.ndarray) -> np.ndarray:
         """Divide spectrogram into time patches.
