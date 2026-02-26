@@ -398,7 +398,8 @@ class Pipeline:
                     stats.samples_tokenized += 1
 
                     if lineage_record:
-                        lineage_record.token_count = tokenized.length
+                        previous_count = getattr(lineage_record, "token_count", 0) or 0
+                        lineage_record.token_count = previous_count + tokenized.length
 
                 # Audit log acceptance
                 if self._audit_logger:
