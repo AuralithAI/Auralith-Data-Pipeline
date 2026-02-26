@@ -308,7 +308,7 @@ class Pipeline:
                 return False
 
         # License check for code samples
-        if self._license_detector and sample.metadata.get("modality") == "code":
+        if self._license_detector and getattr(sample, "modality", None) == "code":
             if not self._license_detector.is_allowed(sample):
                 stats.license_blocked += 1
                 if self._audit_logger:
