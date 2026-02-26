@@ -6,8 +6,10 @@ Features:
   • Pluggable scorer interface for future models
 """
 
+import json
 import logging
 import math
+import re
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -190,10 +192,38 @@ class LLMJudge(QualityScorer):
         else:
             return self._score_local(sample_text)
 
+    @staticmethod
+    def _parse_llm_response(raw: str) -> dict[str, float]:
+        """Parse JSON from an LLM response with a regex fallback.
+
+        If the model wraps its JSON in markdown fences or adds extra prose,
+        we extract the first {...} block before attempting json.loads.
+        On total failure we return neutral defaults.
+        """
+        # Strip markdown code fences if present
+        raw = raw.strip()
+        fence_match = re.search(r"```(?:json)?\s*(\{[^}]*\})\s*```", raw, re.DOTALL)
+        if fence_match:
+            raw = fence_match.group(1)
+        else:
+            # Grab the first {...} block in case the model added preamble text
+            brace_match = re.search(r"\{[^}]*\}", raw, re.DOTALL)
+            if brace_match:
+                raw = brace_match.group(0)
+
+        try:
+            result = json.loads(raw)
+            return {
+                "coherence": float(result.get("coherence", 0.5)),
+                "toxicity": float(result.get("toxicity", 0.0)),
+                "educational_value": float(result.get("educational_value", 0.5)),
+            }
+        except (KeyError, ValueError):
+            logger.debug(f"LLM judge: could not parse JSON from response: {raw[:200]!r}")
+            return {"coherence": 0.5, "toxicity": 0.0, "educational_value": 0.5}
+
     def _score_openai(self, text: str) -> dict[str, float]:
         """Score using OpenAI-compatible API."""
-        import json
-
         try:
             import openai
 
@@ -207,22 +237,15 @@ class LLMJudge(QualityScorer):
                 max_tokens=self.max_tokens,
                 temperature=0.0,
             )
-            result = json.loads(response.choices[0].message.content)
-            return {
-                "coherence": float(result.get("coherence", 0.5)),
-                "toxicity": float(result.get("toxicity", 0.0)),
-                "educational_value": float(result.get("educational_value", 0.5)),
-            }
+            return self._parse_llm_response(response.choices[0].message.content or "")
         except Exception as e:
             logger.warning(f"LLM judge (openai) failed: {e}")
             return {"coherence": 0.5, "toxicity": 0.0, "educational_value": 0.5}
 
     def _score_anthropic(self, text: str) -> dict[str, float]:
         """Score using Anthropic API."""
-        import json
-
         try:
-            import anthropic
+            import anthropic  # type: ignore[import-untyped]
 
             client = anthropic.Anthropic(api_key=self.api_key)
             response = client.messages.create(
@@ -231,12 +254,7 @@ class LLMJudge(QualityScorer):
                 system=self.SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": f"Rate this text:\n\n{text}"}],
             )
-            result = json.loads(response.content[0].text)
-            return {
-                "coherence": float(result.get("coherence", 0.5)),
-                "toxicity": float(result.get("toxicity", 0.0)),
-                "educational_value": float(result.get("educational_value", 0.5)),
-            }
+            return self._parse_llm_response(response.content[0].text)
         except Exception as e:
             logger.warning(f"LLM judge (anthropic) failed: {e}")
             return {"coherence": 0.5, "toxicity": 0.0, "educational_value": 0.5}

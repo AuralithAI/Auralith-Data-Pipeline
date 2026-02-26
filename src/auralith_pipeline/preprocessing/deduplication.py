@@ -58,6 +58,10 @@ class EmbeddingDeduplicator:
         self._dim: int | None = None
         self._count = 0
         self._trained = False
+        # Buffer for vectors accumulated before IVF index can be trained.
+        # FAISS recommends 10-40× nlist training vectors for good cluster quality.
+        self._staging: list[np.ndarray] = []
+        self._min_train_size: int = nlist * 10
 
     def _load_model(self) -> None:
         if self._model is not None:
@@ -103,7 +107,16 @@ class EmbeddingDeduplicator:
             logger.warning("faiss not installed — embedding dedup disabled")
 
     def _embed(self, texts: list[str]) -> np.ndarray:
-        """Compute normalized embeddings."""
+        """Compute L2-normalized embeddings.
+
+        Returns unit-length vectors so that ``dot(a, b)`` equals cosine
+        similarity — the metric used by both the staging-buffer brute-force
+        check and the FAISS ``IndexFlatIP`` / ``IndexIVFFlat`` index.
+
+        We pass ``normalize_embeddings=True`` to the model *and* re-normalise
+        afterwards so the invariant holds even if the underlying model ignores
+        the flag or a future refactor changes the model backend.
+        """
         self._load_model()
         if self._model is None:
             return np.array([])
@@ -114,10 +127,28 @@ class EmbeddingDeduplicator:
             normalize_embeddings=True,
             show_progress_bar=False,
         )
-        return np.asarray(embeddings, dtype=np.float32)
+        embeddings = np.asarray(embeddings, dtype=np.float32)
+
+        # Defensive L2-normalisation: guarantees unit-length vectors regardless
+        # of whether the model actually honoured ``normalize_embeddings``.
+        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+        norms = np.maximum(norms, 1e-12)  # avoid division by zero
+        embeddings = embeddings / norms
+
+        return embeddings
 
     def is_duplicate(self, text: str) -> bool:
-        """Check if text is a semantic duplicate of anything in the index."""
+        """Check if text is a semantic duplicate of anything in the index.
+
+        Pre-training phase (IVF not yet trained):
+          Vectors accumulate in a staging buffer.  Deduplication uses brute-force
+          dot-product against the buffer.  Once _min_train_size vectors are collected
+          (nlist × 10 = 1000 by default), the IVF index is trained and the buffer
+          is flushed into it.
+
+        Post-training phase:
+          Normal approximate nearest-neighbour search via FAISS.
+        """
         self._load_model()
         if self._model is None:
             return False
@@ -130,45 +161,44 @@ class EmbeddingDeduplicator:
         if embedding.size == 0:
             return False
 
-        # Need enough vectors to train IVF
-        import faiss  # noqa: F401
-
+        # IVF indexes require training before they can be searched.
         if hasattr(self._index, "is_trained") and not self._index.is_trained:
-            if self._count < self.nlist:
-                # Can't search yet, just add
-                self._index_add_raw(embedding)
-                return False
-            # Train the index with accumulated vectors
-            self._train_index()
+            # Brute-force cosine-similarity check within the pending buffer
+            # (O(N) — N < _min_train_size ≈ 1000).  Safe because _embed()
+            # guarantees L2-normalised vectors, so dot(a, b) == cos(a, b).
+            for prev in self._staging:
+                if float((prev @ embedding.T).squeeze()) >= self.similarity_threshold:
+                    return True  # duplicate — do NOT add to buffer
 
+            self._staging.append(embedding)
+            self._count += 1
+
+            # Trigger training once we have enough vectors for reliable clustering.
+            if len(self._staging) >= self._min_train_size:
+                self._train_index()
+
+            return False
+
+        # Index is trained — use approximate nearest-neighbour search.
         if self._count == 0:
+            # Flat indexes report is_trained=True even when empty.
             self._index.add(embedding)
             self._count += 1
             return False
 
-        # Search for nearest neighbor
         scores, _ = self._index.search(embedding, 1)
-        max_sim = float(scores[0][0])
+        is_dup = float(scores[0][0]) >= self.similarity_threshold
 
-        # Add to index regardless
-        self._index.add(embedding)
-        self._count += 1
+        if not is_dup:
+            self._index.add(embedding)
+            self._count += 1
 
-        return max_sim >= self.similarity_threshold
-
-    def _index_add_raw(self, embedding: np.ndarray) -> None:
-        """Add to a staging buffer for IVF training."""
-        if not hasattr(self, "_staging"):
-            self._staging: list[np.ndarray] = []
-        self._staging.append(embedding)
-        self._count += 1
+        return is_dup
 
     def _train_index(self) -> None:
-        """Train IVF index from staging buffer."""
-        if not hasattr(self, "_staging") or not self._staging:
+        """Train IVF index from the staging buffer, then flush all staged vectors into it."""
+        if not self._staging:
             return
-
-        import faiss  # noqa: F401
 
         all_vecs = np.concatenate(self._staging, axis=0)
         self._index.train(all_vecs)
@@ -190,8 +220,7 @@ class EmbeddingDeduplicator:
         self._index = None
         self._count = 0
         self._trained = False
-        if hasattr(self, "_staging"):
-            self._staging.clear()
+        self._staging.clear()
 
     def save_index(self, path: str | Path) -> None:
         """Save FAISS index to disk."""

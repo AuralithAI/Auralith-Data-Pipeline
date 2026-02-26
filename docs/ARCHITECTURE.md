@@ -54,8 +54,8 @@ The Auralith Data Pipeline is designed as a modular, scalable system for collect
 │                     SHARDING STAGE                                  │
 │  ┌──────────────────────────────────────────────────────────────┐   │
 │  │  Organize tokenized samples into efficient SafeTensors       │   │
-│  │  Configurable shard size (default: 1GB)                      │   │
-│  │  Metadata tracking (statistics, checksums, etc.)             │   │
+│  │  Fixed-length padding, right-shifted targets                 │   │
+│  │  Metadata tracking (statistics, SHA-256 checksums)           │   │
 │  │  Optional compression (zstd, gzip)                           │   │
 │  └──────────────────────────────────────────────────────────────┘   │
 └────────────────┬────────────────────────────────────────────────────┘
@@ -149,14 +149,16 @@ result = extractor.extract("document.pdf")
 **Key Classes**:
 
 #### Tokenizer
-- Wraps HuggingFace tokenizers (or custom implementations)
+- Custom BPE tokenizer (16 special tokens, byte-level fallback)
+- 256 byte tokens (IDs 16–271) for lossless UTF-8 encoding
+- LRU-bounded merge cache (100k entries)
 - Handles encoding/decoding
 - Supports multiple vocabularies
 
 #### TokenizationPipeline
 - **Chunking**: Splits long texts into training sequences
 - **Padding**: Handles variable-length inputs
-- **Attention masks**: Generates masks for padding
+- **Attention masks**: Generates masks for padding (uint8)
 - **Metadata preservation**: Maintains sample provenance
 
 **Output Format**:
@@ -164,9 +166,14 @@ result = extractor.extract("document.pdf")
 @dataclass
 class TokenizedSample:
     input_ids: list[int]          # Token IDs
-    attention_mask: list[int]      # Attention mask
+    attention_mask: list[int]      # Attention mask (1=real, 0=pad)
+    labels: list[int]             # Internal labels (−100 at pad positions)
+    modality_mask: list[int]      # 0=text,1=img,2=aud,3=vid,4=code
     metadata: dict[str, Any]       # Original sample metadata
 ```
+
+> **Note**: The shard writer converts the internal `labels` field to `targets`
+> (right-shifted `input_ids`) and casts masks to uint8 when writing SafeTensors.
 
 ### 5. Sharding (`sharding/`)
 
@@ -177,7 +184,10 @@ class TokenizedSample:
 #### ShardWriter
 - **Buffering**: Accumulates samples before writing
 - **Size management**: Flushes shards at configured size limit
+- **Fixed-length padding**: All sequences padded/truncated to `config.sequence_length` for JAX
 - **Format**: SafeTensors (secure, fast, language-agnostic)
+- **Schema v2**: `input_ids` (int32), `attention_mask` (uint8), `modality_mask` (uint8), `targets` (int32, right-shifted `input_ids`)
+- **Checksums**: SHA-256 per shard
 - **Compression**: Optional zstd/gzip compression
 
 #### ShardMetadata
@@ -187,11 +197,12 @@ Tracks per-shard information:
 class ShardMetadata:
     shard_id: int
     num_samples: int
-    total_bytes: int
+    size_bytes: int
     sequence_length: int
-    compression: Optional[str]
     created_at: str
-    checksum: str
+    checksum: str            # SHA-256
+    compression: str | None
+    source_info: dict[str, Any]
 ```
 
 #### ShardIndex
@@ -284,6 +295,7 @@ print(f"Shards: {stats.shard_count}")
 1. **Collection**
    - Data sources iterate and yield `DataSample` objects
    - Content, metadata, and modality information included
+   - Weighted round-robin interleaving across sources
 
 2. **Preprocessing**
    - Text normalization applied
@@ -298,22 +310,45 @@ print(f"Shards: {stats.shard_count}")
    - Metadata enriched
 
 4. **Tokenization**
-   - Text converted to token sequences
+   - Text converted to BPE token sequences (byte-level fallback)
    - Long sequences chunked with overlap
-   - Attention masks created
+   - Attention masks created (uint8)
    - Training samples prepared
 
 5. **Sharding**
    - TokenizedSamples buffered in memory
+   - Fixed-length padding/truncation to `seq_len`
+   - `targets` tensor computed (right-shifted `input_ids`)
    - Shards written when size threshold reached
    - Metadata and index created
-   - Checksums computed
+   - SHA-256 checksums computed
 
 6. **Storage**
    - Shards uploaded to configured backend
    - Index file uploaded
    - Verification against checksums
    - Dataset ready for training
+
+### Filter Execution Order (per sample)
+
+The pipeline applies the following stages in order. A sample is rejected
+as soon as any stage fails, avoiding wasted computation on downstream filters.
+
+| Stage | Component | Purpose |
+|-------|-----------|---------|
+| 1+2 | Preprocessor | Normalise text + basic quality filter |
+| 3 | Security | PII scrubbing + secrets sanitisation (before dedup fingerprint) |
+| 4 | FAISS dedup | Embedding-based near-duplicate detection |
+| 5 | Advanced quality | Perplexity filter + LLM-as-Judge |
+| 6 | Compliance | Licence detection for code samples |
+| → | Tokenise + Shard | BPE encode, write fixed-length SafeTensors |
+
+### Checkpointing & Reproducibility
+
+- `seed` controls both `numpy` and `random` RNG seeds for full determinism.
+- A JSON checkpoint is saved every `checkpoint_every` accepted samples.
+- On resume, the pipeline restores the numpy RNG state and fast-forwards
+  the source iterator to the correct position.
 
 ## Streaming vs Batch Modes
 
@@ -349,8 +384,9 @@ for batch in pipeline.stream(batch_size=100):
 
 ### Tokenization Speed
 - **Batch processing**: 10,000+ samples/second
+- **LRU cache**: Bounded word-level merge cache (100k entries)
 - **Vectorized operations**: NumPy/PyTorch
-- **Parallel tokenizers**: Multi-threaded by default
+- **Byte-level fallback**: Lossless encoding of any UTF-8 input
 
 ### Storage Optimization
 - **SafeTensors**: Minimal overhead, zero-copy reads
@@ -403,13 +439,20 @@ class CustomStorage(StorageBackend):
 ```python
 class PipelineStats:
     total_samples: int
-    deduplicated_count: int
-    filtered_count: int
+    samples_after_filter: int
+    samples_tokenized: int
+    duplicates_removed: int
+    pii_removed: int
+    num_shards: int
     total_tokens: int
-    output_dir: str
-    shard_count: int
     total_size_bytes: int
-    processing_time_seconds: float
+    elapsed_time_seconds: float
+    perplexity_filtered: int
+    llm_judge_filtered: int
+    embedding_dedup_removed: int
+    license_blocked: int
+    synthetic_generated: int
+    modalities: dict[str, int]
 ```
 
 ### Error Handling
@@ -441,7 +484,7 @@ docker run -v /data:/data auralith-pipeline collect --dataset wikipedia
 
 - **PII Protection**: Automatic detection and redaction
 - **Data Validation**: Schema validation for all inputs
-- **Safe Tensor Format**: Cryptographic checksums
+- **Safe Tensor Format**: SHA-256 cryptographic checksums
 - **Access Control**: Token-based authentication
 - **Audit Logging**: Complete processing history
 

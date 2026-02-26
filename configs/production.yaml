@@ -6,31 +6,58 @@ pipeline:
   name: production-pipeline
   output_dir: ./data/shards
   temp_dir: ./data/temp
-  
+
   # Preprocessing options
   deduplicate: true
   quality_filter: true
   remove_pii: true
   normalize_text: true
-  
+
   # Processing options
   num_workers: 8
   batch_size: 1000
   streaming: true
   # max_samples: 10000000  # Uncomment to limit samples
 
-# Data sources to collect
+  # Reproducibility & fault-tolerance
+  seed: 42
+  checkpoint_every: 10000       # save resume checkpoint every N accepted samples
+
+# ---------------------------------------------------------------------------
+# Data sources — weights control the fraction of each source in the
+# interleaved stream (weighted round-robin).  Weights need not sum to 1;
+# they are normalised automatically.
+# ---------------------------------------------------------------------------
 sources:
   - type: huggingface
     path: wikipedia
     name: 20231101.en
     split: train
     text_column: text
-    
+    weight: 0.25
+
+  # Uncomment to add more sources; adjust weights to taste.
   # - type: huggingface
-  #   path: EleutherAI/pile
-  #   streaming: true
+  #   path: allenai/c4
+  #   name: en
+  #   split: train
   #   text_column: text
+  #   streaming: true
+  #   weight: 0.40
+
+  # - type: huggingface
+  #   path: bigcode/the-stack
+  #   split: train
+  #   text_column: content
+  #   streaming: true
+  #   weight: 0.20
+
+  # - type: huggingface
+  #   path: Skylion007/openwebtext
+  #   split: train
+  #   text_column: text
+  #   streaming: true
+  #   weight: 0.15
 
   # Video sources
   # - type: video

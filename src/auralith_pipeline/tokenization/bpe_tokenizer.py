@@ -7,6 +7,7 @@ without any dependency on transformers or other tokenizer libraries.
 import json
 import logging
 import re
+import unicodedata
 from collections import Counter
 from pathlib import Path
 
@@ -26,6 +27,10 @@ class BPETokenizer:
     - Fast encoding with merge caching
     - UTF-8 Unicode support
     """
+
+    # Byte tokens occupy IDs 16–271 (256 raw UTF-8 byte values).
+    # BPE merge tokens start at ID 272 so the spaces never overlap.
+    BYTE_TOKEN_OFFSET: int = 16
 
     # Special tokens (assigned IDs 0-15 for consistency)
     SPECIAL_TOKENS = {
@@ -93,19 +98,28 @@ class BPETokenizer:
         self.id_to_token: dict[int, str] = {}  # ID -> token
         self.merge_rules: list[tuple[str, str]] = []  # Ordered list of (pair1, pair2) merges
 
-        # Cache for faster encoding
+        # Cache for faster encoding — bounded to avoid unbounded RAM growth
         self._word_cache: dict[str, list[str]] = {}  # word -> subword tokens
+        self._word_cache_maxsize: int = 100_000
 
         # Initialize with special tokens
         self._initialize_special_tokens()
 
     def _initialize_special_tokens(self):
-        """Initialize vocabulary with special tokens."""
+        """Initialize vocabulary with special tokens and UTF-8 byte tokens."""
         self.vocab = self.SPECIAL_TOKENS.copy()
         # Also register legacy aliases pointing to the same IDs
         for old_name, new_name in self._LEGACY_ALIASES.items():
             self.vocab[old_name] = self.SPECIAL_TOKENS[new_name]
         self.id_to_token = {v: k for k, v in self.SPECIAL_TOKENS.items()}
+
+        # Byte tokens: IDs 16–271, one per possible UTF-8 byte value.
+        # These provide a lossless fallback for any character not in the BPE vocab.
+        for byte_val in range(256):
+            token = f"<byte_{byte_val:02x}>"
+            token_id = self.BYTE_TOKEN_OFFSET + byte_val
+            self.vocab[token] = token_id
+            self.id_to_token[token_id] = token
 
     @property
     def pad_token_id(self) -> int:
@@ -335,31 +349,37 @@ class BPETokenizer:
         """
         # Check cache first
         if word in self._word_cache:
-            cached_tokens = self._word_cache[word]
-            return [self.vocab.get(token, self.unk_token_id) for token in cached_tokens]
+            return self._ids_from_symbols(self._word_cache[word])
 
-        # Convert to character symbols
-        symbols = self._word_to_symbols(word)
+        # Convert to character symbols and apply merge rules
+        symbols = self._apply_merges(self._word_to_symbols(word))
 
-        # Apply merge rules
-        symbols = self._apply_merges(symbols)
+        # Evict oldest half of cache when full (amortised O(1) per call)
+        if len(self._word_cache) >= self._word_cache_maxsize:
+            evict = self._word_cache_maxsize // 2
+            for key in list(self._word_cache.keys())[:evict]:
+                del self._word_cache[key]
 
-        # Cache the result
         self._word_cache[word] = symbols
+        return self._ids_from_symbols(symbols)
 
-        # Convert to IDs (with fallback to <unk>)
-        ids = []
-        for symbol in symbols:
-            if symbol in self.vocab:
-                ids.append(self.vocab[symbol])
+    def _symbol_to_ids(self, symbol: str) -> list[int]:
+        """Map one BPE symbol to token IDs with byte-level fallback for OOV chars."""
+        if symbol in self.vocab:
+            return [self.vocab[symbol]]
+        ids: list[int] = []
+        for char in symbol:
+            if char in self.vocab:
+                ids.append(self.vocab[char])
             else:
-                # Character-level fallback for unknown symbols
-                for char in symbol:
-                    if char in self.vocab:
-                        ids.append(self.vocab[char])
-                    else:
-                        ids.append(self.unk_token_id)
+                ids.extend(self.BYTE_TOKEN_OFFSET + b for b in char.encode("utf-8"))
+        return ids
 
+    def _ids_from_symbols(self, symbols: list[str]) -> list[int]:
+        """Convert a list of BPE symbols to token IDs (lossless — no <unk>)."""
+        ids: list[int] = []
+        for symbol in symbols:
+            ids.extend(self._symbol_to_ids(symbol))
         return ids
 
     def encode(
@@ -378,6 +398,9 @@ class BPETokenizer:
         Returns:
             List of token IDs
         """
+        # Normalize to NFC so that visually identical characters map to the same tokens
+        text = unicodedata.normalize("NFC", text)
+
         # Preprocess
         text = self._preprocess_text(text)
 

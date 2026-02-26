@@ -1,5 +1,6 @@
 """Sharding module for creating and reading SafeTensors shards."""
 
+import hashlib
 import json
 import logging
 from collections.abc import Iterator
@@ -118,34 +119,57 @@ class ShardWriter:
         self._current_size += sample_size
         self._total_samples += 1
 
+    @staticmethod
+    def _pad_sequence(seq: list[int], max_len: int, pad_value: int = 0) -> list[int]:
+        """Truncate or right-pad a sequence to exactly max_len."""
+        if len(seq) >= max_len:
+            return seq[:max_len]
+        return seq + [pad_value] * (max_len - len(seq))
+
     def _flush_shard(self):
         """Write current samples to a shard file.
 
         SafeTensors schema (RT-DLM compatible):
             input_ids:      int32  (batch, seq_len)  — all tokens
-            attention_mask: int32  (batch, seq_len)  — 1=real, 0=pad
+            attention_mask: uint8  (batch, seq_len)  — 1=real, 0=pad
             modality_mask:  uint8  (batch, seq_len)  — 0=text,1=img,2=aud,3=vid,4=code
-            labels:         int32  (batch, seq_len)  — causal LM (-100=ignore)
+            targets:        int32  (batch, seq_len)  — right-shifted input_ids for causal LM
         """
         if not self._current_samples:
             return
 
         shard_path = self.output_dir / f"{self.prefix}_{self._shard_count:05d}.safetensors"
 
-        # Convert samples to arrays
-        input_ids = np.array([s.input_ids for s in self._current_samples], dtype=np.int32)
-        attention_mask = np.array([s.attention_mask for s in self._current_samples], dtype=np.int32)
+        # Fixed sequence length from config — all tensors must share this shape for JAX
+        max_len = self.config.sequence_length
+
+        # Convert samples to fixed-length arrays, padding/truncating as needed
+        input_ids = np.array(
+            [self._pad_sequence(s.input_ids, max_len, 0) for s in self._current_samples],
+            dtype=np.int32,
+        )
+        attention_mask = np.array(
+            [self._pad_sequence(s.attention_mask, max_len, 0) for s in self._current_samples],
+            dtype=np.uint8,  # uint8 saves 4x memory vs int32; JAX accepts this for masks
+        )
         modality_mask = np.array(
             [
-                s.modality_mask if s.modality_mask else [0] * len(s.input_ids)
+                self._pad_sequence(
+                    s.modality_mask if s.modality_mask else [0] * len(s.input_ids),
+                    max_len,
+                    0,
+                )
                 for s in self._current_samples
             ],
             dtype=np.uint8,
         )
-        labels = np.array(
-            [s.labels if s.labels else s.input_ids for s in self._current_samples],
-            dtype=np.int32,
-        )
+
+        # targets = right-shifted input_ids (causal LM objective for JAX/RT-DLM).
+        # JAX does not recognise -100 as an ignore index, so we use the attention_mask
+        # to zero out padding positions in the loss instead.
+        targets = np.zeros_like(input_ids)  # (N, max_len) int32, pad positions → 0
+        targets[:, :-1] = input_ids[:, 1:]  # shift left: predict next token
+        # targets[:, -1] stays 0 (no next token for last position)
 
         # Write SafeTensors
         try:
@@ -155,16 +179,16 @@ class ShardWriter:
                 "input_ids": input_ids,
                 "attention_mask": attention_mask,
                 "modality_mask": modality_mask,
-                "labels": labels,
+                "targets": targets,
             }
 
             # Collect per-shard metadata as JSON in the SafeTensors header
             shard_metadata_dict = {
                 "pipeline_version": "2.0",
-                "schema_version": "1",
+                "schema_version": "2",  # bumped: labels→targets, uint8 masks
                 "shard_id": str(self._shard_count),
                 "num_samples": str(len(self._current_samples)),
-                "seq_length": str(input_ids.shape[1]) if input_ids.ndim > 1 else "variable",
+                "seq_length": str(max_len),
             }
 
             # Gather sample-level metadata
@@ -177,10 +201,8 @@ class ShardWriter:
 
             save_file(tensors, str(shard_path), metadata=shard_metadata_dict)
 
-            # Calculate checksum
-            import hashlib
-
-            checksum = hashlib.md5(shard_path.read_bytes()).hexdigest()
+            # SHA-256 checksum
+            checksum = hashlib.sha256(shard_path.read_bytes()).hexdigest()
 
             # Create metadata
             from datetime import datetime
@@ -189,7 +211,7 @@ class ShardWriter:
                 shard_id=self._shard_count,
                 num_samples=len(self._current_samples),
                 size_bytes=shard_path.stat().st_size,
-                sequence_length=len(self._current_samples[0].input_ids),
+                sequence_length=max_len,
                 created_at=datetime.now().isoformat(),
                 checksum=checksum,
                 compression=self.config.compression,
@@ -272,14 +294,14 @@ class ShardReader:
             input_ids = data["input_ids"]
             attention_mask = data["attention_mask"]
             modality_mask = data.get("modality_mask")
-            labels = data.get("labels")
+            targets = data.get("targets", data.get("labels"))
 
             for i in range(len(input_ids)):
                 yield TokenizedSample(
                     input_ids=input_ids[i].tolist(),
                     attention_mask=attention_mask[i].tolist(),
                     modality_mask=modality_mask[i].tolist() if modality_mask is not None else None,
-                    labels=labels[i].tolist() if labels is not None else None,
+                    labels=targets[i].tolist() if targets is not None else None,
                     metadata={"shard": shard_path.name},
                 )
 

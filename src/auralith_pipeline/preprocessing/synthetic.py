@@ -18,6 +18,21 @@ from auralith_pipeline.sources.data_sources import DataSample
 
 logger = logging.getLogger(__name__)
 
+# Module-level cache so ~300 MB MarianMT models are loaded at most once per process.
+_TRANSLATION_MODEL_CACHE: dict[str, tuple] = {}
+
+
+def _get_translation_model(model_name: str) -> tuple:
+    """Return (model, tokenizer) for *model_name*, loading from HF only on first call."""
+    if model_name not in _TRANSLATION_MODEL_CACHE:
+        from transformers import MarianMTModel, MarianTokenizer  # type: ignore[import-untyped]
+
+        tokenizer = MarianTokenizer.from_pretrained(model_name)
+        model = MarianMTModel.from_pretrained(model_name)
+        _TRANSLATION_MODEL_CACHE[model_name] = (model, tokenizer)
+        logger.info(f"Loaded MarianMT model {model_name!r} into cache")
+    return _TRANSLATION_MODEL_CACHE[model_name]
+
 
 class LocalDataAugmenter:
     """Local-only data augmentation."""
@@ -178,17 +193,12 @@ class LocalDataAugmenter:
         Falls back gracefully if models are not available.
         """
         try:
-            from transformers import MarianMTModel, MarianTokenizer
-
             # EN → DE
             en_de_name = "Helsinki-NLP/opus-mt-en-de"
             de_en_name = "Helsinki-NLP/opus-mt-de-en"
 
-            tokenizer_en_de = MarianTokenizer.from_pretrained(en_de_name)
-            model_en_de = MarianMTModel.from_pretrained(en_de_name)
-
-            tokenizer_de_en = MarianTokenizer.from_pretrained(de_en_name)
-            model_de_en = MarianMTModel.from_pretrained(de_en_name)
+            model_en_de, tokenizer_en_de = _get_translation_model(en_de_name)
+            model_de_en, tokenizer_de_en = _get_translation_model(de_en_name)
 
             # Truncate to avoid OOM
             text = sample.content[:512]
