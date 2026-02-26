@@ -165,7 +165,11 @@ class Pipeline:
             llm_judge_config = (
                 {
                     "provider": aq_cfg.llm_judge_provider,
-                    "model_name": aq_cfg.llm_judge_model,
+                    **(
+                        {"model_name": aq_cfg.llm_judge_model}
+                        if aq_cfg.llm_judge_model is not None
+                        else {}
+                    ),
                 }
                 if aq_cfg.llm_judge
                 else None
