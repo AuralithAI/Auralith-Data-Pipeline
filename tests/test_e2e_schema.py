@@ -109,6 +109,18 @@ class TestSafeTensorsSchema:
         assert sample.labels is not None
         assert sample.labels == [10, 20, 30]
 
+    def test_tokenized_sample_labels_mask_padding(self):
+        """Labels should be -100 at pad positions (attention_mask == 0)."""
+        from auralith_pipeline.tokenization.tokenizer import TokenizedSample
+
+        sample = TokenizedSample(
+            input_ids=[10, 20, 30, 0, 0],
+            attention_mask=[1, 1, 1, 0, 0],
+            metadata={},
+        )
+
+        assert sample.labels == [10, 20, 30, -100, -100]
+
 
 # ===========================================================================
 # Special Tokens

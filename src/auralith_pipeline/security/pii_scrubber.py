@@ -293,9 +293,7 @@ class PIIScrubber:
             for match in pattern.finditer(text):
                 original = match.group()
                 replacement = self._make_replacement(category, original)
-                match_records.append(
-                    (match.start(), match.end(), category, original, replacement)
-                )
+                match_records.append((match.start(), match.end(), category, original, replacement))
 
         if not match_records:
             # Fast path: no PII detected, return early.

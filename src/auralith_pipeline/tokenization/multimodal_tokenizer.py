@@ -690,7 +690,7 @@ class MultimodalTokenizer:
         Returns:
             Dict with keys:
                 input_ids:      list[int]  — unified token sequence
-                modality_mask:  list[int]  — per-token modality (0=text,1=img,2=aud,3=vid)
+                modality_mask:  list[int]  — per-token modality (0=text,1=img,2=aud,3=vid,4=code)
                 labels:         list[int]  — causal LM labels (-100 for special tokens)
         """
         # Tokenize text first
@@ -768,7 +768,7 @@ class MultimodalTokenizer:
             text_tokens = text_tokens[:max_length]
             modality_mask = modality_mask[:max_length]
 
-        # Build causal LM labels: shift input_ids, mask special tokens with -100
+        # Build causal LM labels: mask special tokens with -100
         special_ids = set(self.text_tokenizer.SPECIAL_TOKENS.values())
         labels = []
         for tid in text_tokens:

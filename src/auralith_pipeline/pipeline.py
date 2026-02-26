@@ -137,6 +137,9 @@ class Pipeline:
         if self.config.advanced_quality.enabled:
             self._setup_advanced_quality()
 
+        if self.config.deduplication.method == "embedding":
+            self._setup_embedding_dedup()
+
         if self.config.tracking.enabled:
             self._setup_tracking()
 
@@ -185,17 +188,18 @@ class Pipeline:
         except Exception as e:
             logger.warning(f"Could not initialize advanced quality: {e}")
 
-        if self.config.deduplication.method == "embedding":
-            try:
-                from auralith_pipeline.preprocessing.deduplication import EmbeddingDeduplicator
+    def _setup_embedding_dedup(self) -> None:
+        """Set up FAISS embedding deduplication (independent of advanced quality)."""
+        try:
+            from auralith_pipeline.preprocessing.deduplication import EmbeddingDeduplicator
 
-                self._embedding_dedup = EmbeddingDeduplicator(
-                    model_name=self.config.deduplication.embedding_model,
-                    similarity_threshold=self.config.deduplication.embedding_threshold,
-                )
-                logger.info("FAISS embedding deduplication enabled")
-            except Exception as e:
-                logger.warning(f"Could not initialize embedding dedup: {e}")
+            self._embedding_dedup = EmbeddingDeduplicator(
+                model_name=self.config.deduplication.embedding_model,
+                similarity_threshold=self.config.deduplication.embedding_threshold,
+            )
+            logger.info("FAISS embedding deduplication enabled")
+        except Exception as e:
+            logger.warning(f"Could not initialize embedding dedup: {e}")
 
     def _setup_tracking(self) -> None:
         """Set up experiment tracking and lineage."""
@@ -326,11 +330,13 @@ class Pipeline:
 
         # Advanced quality (perplexity + LLM judge)
         if self._advanced_quality:
-            passed, scores = self._advanced_quality.evaluate(sample)
+            prev_ppl = self._advanced_quality.stats["failed_perplexity"]
+            prev_judge = self._advanced_quality.stats["failed_llm_judge"]
+            passed, _scores = self._advanced_quality.evaluate(sample)
             if not passed:
-                if scores.get("perplexity", -1) < 0:
+                if self._advanced_quality.stats["failed_perplexity"] > prev_ppl:
                     stats.perplexity_filtered += 1
-                if scores.get("coherence", 1.0) < 0.4:
+                if self._advanced_quality.stats["failed_llm_judge"] > prev_judge:
                     stats.llm_judge_filtered += 1
                 return False
 
@@ -439,7 +445,7 @@ class Pipeline:
 
             if self._preprocessor:
                 stats.duplicates_removed = self._preprocessor.stats["duplicates_removed"]
-                stats.pii_removed = self._preprocessor.stats["pii_removed"]
+                stats.pii_removed += self._preprocessor.stats["pii_removed"]
 
         except Exception as e:
             logger.error(f"Pipeline failed: {e}")
@@ -469,7 +475,7 @@ class Pipeline:
         """Finalize tracking: metrics, lineage, data card."""
         if self._experiment_tracker:
             self._experiment_tracker.log_metrics(
-                {k: float(v) for k, v in stats.to_dict().items() if isinstance(v, (int, float))}
+                {k: float(v) for k, v in stats.to_dict().items() if isinstance(v, int | float)}
             )
             self._experiment_tracker.end_run(status="success")
 

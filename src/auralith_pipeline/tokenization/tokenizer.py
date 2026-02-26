@@ -37,12 +37,18 @@ class TokenizedSample:
         return len(self.input_ids)
 
     def __post_init__(self):
-        """Fill defaults for modality_mask and labels if not provided."""
+        """Fill defaults for modality_mask and labels if not provided.
+
+        Labels default to input_ids for real tokens and -100 for pad
+        positions (where attention_mask == 0), matching the documented
+        schema semantics so pad tokens are excluded from the loss.
+        """
         if self.modality_mask is None:
             self.modality_mask = [0] * len(self.input_ids)  # Default: all text
         if self.labels is None:
-            # Default causal LM labels = input_ids (no masking)
-            self.labels = list(self.input_ids)
+            self.labels = [
+                tid if mask == 1 else -100 for tid, mask in zip(self.input_ids, self.attention_mask)
+            ]
 
 
 class Tokenizer:

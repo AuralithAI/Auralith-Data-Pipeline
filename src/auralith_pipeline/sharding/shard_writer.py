@@ -124,7 +124,7 @@ class ShardWriter:
         SafeTensors schema (RT-DLM compatible):
             input_ids:      int32  (batch, seq_len)  — all tokens
             attention_mask: int32  (batch, seq_len)  — 1=real, 0=pad
-            modality_mask:  uint8  (batch, seq_len)  — 0=text,1=img,2=aud,3=vid
+            modality_mask:  uint8  (batch, seq_len)  — 0=text,1=img,2=aud,3=vid,4=code
             labels:         int32  (batch, seq_len)  — causal LM (-100=ignore)
         """
         if not self._current_samples:
@@ -176,8 +176,6 @@ class ShardWriter:
             shard_metadata_dict["sources"] = ",".join(sample_sources)
 
             save_file(tensors, str(shard_path), metadata=shard_metadata_dict)
-
-            save_file(tensors, str(shard_path))
 
             # Calculate checksum
             import hashlib
