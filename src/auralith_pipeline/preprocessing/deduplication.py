@@ -107,7 +107,16 @@ class EmbeddingDeduplicator:
             logger.warning("faiss not installed — embedding dedup disabled")
 
     def _embed(self, texts: list[str]) -> np.ndarray:
-        """Compute normalized embeddings."""
+        """Compute L2-normalized embeddings.
+
+        Returns unit-length vectors so that ``dot(a, b)`` equals cosine
+        similarity — the metric used by both the staging-buffer brute-force
+        check and the FAISS ``IndexFlatIP`` / ``IndexIVFFlat`` index.
+
+        We pass ``normalize_embeddings=True`` to the model *and* re-normalise
+        afterwards so the invariant holds even if the underlying model ignores
+        the flag or a future refactor changes the model backend.
+        """
         self._load_model()
         if self._model is None:
             return np.array([])
@@ -118,7 +127,15 @@ class EmbeddingDeduplicator:
             normalize_embeddings=True,
             show_progress_bar=False,
         )
-        return np.asarray(embeddings, dtype=np.float32)
+        embeddings = np.asarray(embeddings, dtype=np.float32)
+
+        # Defensive L2-normalisation: guarantees unit-length vectors regardless
+        # of whether the model actually honoured ``normalize_embeddings``.
+        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+        norms = np.maximum(norms, 1e-12)  # avoid division by zero
+        embeddings = embeddings / norms
+
+        return embeddings
 
     def is_duplicate(self, text: str) -> bool:
         """Check if text is a semantic duplicate of anything in the index.
@@ -146,7 +163,9 @@ class EmbeddingDeduplicator:
 
         # IVF indexes require training before they can be searched.
         if hasattr(self._index, "is_trained") and not self._index.is_trained:
-            # Brute-force dedup within the pending buffer (O(N) — N < 1000).
+            # Brute-force cosine-similarity check within the pending buffer
+            # (O(N) — N < _min_train_size ≈ 1000).  Safe because _embed()
+            # guarantees L2-normalised vectors, so dot(a, b) == cos(a, b).
             for prev in self._staging:
                 if float((prev @ embedding.T).squeeze()) >= self.similarity_threshold:
                     return True  # duplicate — do NOT add to buffer
