@@ -433,10 +433,6 @@ export MLFLOW_TRACKING_URI=http://mlflow.internal:5000
 
 # W&B (optional)
 export WANDB_API_KEY=xxxxx
-
-# OpenAI / Anthropic (for LLM Judge / Synthetic data)
-export OPENAI_API_KEY=sk-xxxxx
-export ANTHROPIC_API_KEY=sk-ant-xxxxx
 ```
 
 ## License
