@@ -48,7 +48,7 @@ class VectorQuantizer:
 
         # EMA accumulators (initialised after first train() call)
         self._ema_cluster_size: np.ndarray | None = None  # (codebook_size,)
-        self._ema_embed_sum: np.ndarray | None = None      # (codebook_size, feature_dim)
+        self._ema_embed_sum: np.ndarray | None = None  # (codebook_size, feature_dim)
 
     def train(self, features: np.ndarray, verbose: bool = True) -> None:
         """Train codebook via k-means clustering.
@@ -132,16 +132,14 @@ class VectorQuantizer:
         one_hot = np.zeros((len(assignments), self.codebook_size), dtype=np.float64)
         one_hot[np.arange(len(assignments)), assignments] = 1.0
 
-        batch_cluster_size = one_hot.sum(axis=0)          # (codebook_size,)
-        batch_embed_sum    = one_hot.T @ features.astype(np.float64)  # (codebook_size, feature_dim)
+        batch_cluster_size = one_hot.sum(axis=0)  # (codebook_size,)
+        batch_embed_sum = one_hot.T @ features.astype(np.float64)  # (codebook_size, feature_dim)
 
         self._ema_cluster_size = (
-            self.ema_decay * self._ema_cluster_size
-            + (1.0 - self.ema_decay) * batch_cluster_size
+            self.ema_decay * self._ema_cluster_size + (1.0 - self.ema_decay) * batch_cluster_size
         )
         self._ema_embed_sum = (
-            self.ema_decay * self._ema_embed_sum
-            + (1.0 - self.ema_decay) * batch_embed_sum
+            self.ema_decay * self._ema_embed_sum + (1.0 - self.ema_decay) * batch_embed_sum
         )
 
         # Laplace smoothing: prevents any code from having a zero-count denominator
@@ -517,11 +515,11 @@ class AudioTokenizer:
         k = np.arange(n_freqs, dtype=np.float32)
         filterbank = np.zeros((self.n_mels, n_freqs), dtype=np.float32)
         for m in range(1, self.n_mels + 1):
-            f_left   = bin_points[m - 1]
+            f_left = bin_points[m - 1]
             f_center = bin_points[m]
-            f_right  = bin_points[m + 1]
-            rising  = (k - f_left)  / max(f_center - f_left,  1)
-            falling = (f_right - k) / max(f_right  - f_center, 1)
+            f_right = bin_points[m + 1]
+            rising = (k - f_left) / max(f_center - f_left, 1)
+            falling = (f_right - k) / max(f_right - f_center, 1)
             filterbank[m - 1] = np.maximum(0.0, np.minimum(rising, falling))
 
         return filterbank
@@ -545,16 +543,18 @@ class AudioTokenizer:
         hann_window = np.hanning(self.n_fft).astype(np.float32)
 
         # Stack all windowed frames: (num_frames, n_fft)
-        frames = np.stack([
-            waveform[i * self.hop_length : i * self.hop_length + self.n_fft] * hann_window
-            for i in range(num_frames)
-        ])
+        frames = np.stack(
+            [
+                waveform[i * self.hop_length : i * self.hop_length + self.n_fft] * hann_window
+                for i in range(num_frames)
+            ]
+        )
 
         # Power spectrum: (num_frames, n_fft//2 + 1)
         power = np.abs(np.fft.rfft(frames, axis=1).astype(np.complex64)) ** 2
 
         # Apply mel filterbank: (n_mels, n_fft//2+1) @ (n_fft//2+1, num_frames)
-        mel_spec = self._mel_filterbank @ power.T   # (n_mels, num_frames)
+        mel_spec = self._mel_filterbank @ power.T  # (n_mels, num_frames)
 
         # Log scale (dB)
         return 10.0 * np.log10(np.maximum(mel_spec, 1e-10))

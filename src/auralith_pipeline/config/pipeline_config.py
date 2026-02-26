@@ -189,7 +189,7 @@ class PipelineConfig:
 
     # Reproducibility & fault-tolerance
     seed: int = 42
-    checkpoint_every: int = 10_000   # save resume checkpoint every N accepted samples
+    checkpoint_every: int = 10_000  # save resume checkpoint every N accepted samples
     checkpoint_path: str | None = None  # defaults to {output_dir}/.pipeline_checkpoint.json
 
     # Sub-configs
@@ -212,7 +212,7 @@ class PipelineConfig:
         audio_offset = 200_000
         video_offset = self.video.video_token_offset  # 300_000 default
 
-        img_end = image_offset + 1024 - 1   # image codebook_size = 1024
+        img_end = image_offset + 1024 - 1  # image codebook_size = 1024
         audio_end = audio_offset + 512 - 1  # audio codebook_size = 512
 
         if max_text_id >= image_offset:
@@ -231,6 +231,7 @@ class PipelineConfig:
         if self.tokenization.max_length != self.sharding.sequence_length:
             # Warn rather than hard-error; user might intentionally differ
             import logging
+
             logging.getLogger(__name__).warning(
                 f"tokenization.max_length ({self.tokenization.max_length}) != "
                 f"sharding.sequence_length ({self.sharding.sequence_length}). "

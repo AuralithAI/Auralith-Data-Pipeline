@@ -29,12 +29,14 @@ class TestBPETokenizer:
 
     def test_training(self):
         corpus = "the quick brown fox jumps over the lazy dog " * 50
-        tokenizer = BPETokenizer(vocab_size=200, min_frequency=2)
+        # vocab_size must exceed 272 (16 special + 256 byte tokens) + char vocab
+        # to leave room for BPE merges.
+        tokenizer = BPETokenizer(vocab_size=500, min_frequency=2)
         tokenizer.train(corpus, verbose=False)
 
         assert len(tokenizer.vocab) > 10
         assert len(tokenizer.merge_rules) > 0
-        assert tokenizer.get_vocab_size() <= 200
+        assert tokenizer.get_vocab_size() <= 500
 
     def test_encode_decode(self):
         corpus = "hello world this is a test " * 100

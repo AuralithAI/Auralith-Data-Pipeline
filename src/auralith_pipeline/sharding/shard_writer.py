@@ -167,8 +167,8 @@ class ShardWriter:
         # targets = right-shifted input_ids (causal LM objective for JAX/RT-DLM).
         # JAX does not recognise -100 as an ignore index, so we use the attention_mask
         # to zero out padding positions in the loss instead.
-        targets = np.zeros_like(input_ids)          # (N, max_len) int32, pad positions → 0
-        targets[:, :-1] = input_ids[:, 1:]          # shift left: predict next token
+        targets = np.zeros_like(input_ids)  # (N, max_len) int32, pad positions → 0
+        targets[:, :-1] = input_ids[:, 1:]  # shift left: predict next token
         # targets[:, -1] stays 0 (no next token for last position)
 
         # Write SafeTensors

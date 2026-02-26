@@ -21,7 +21,6 @@ import pytest
 from auralith_pipeline.config.pipeline_config import PipelineConfig
 from auralith_pipeline.sources.data_sources import DataSample, DataSource
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -50,6 +49,7 @@ class _SyntheticSource(DataSource):
     @property
     def name(self) -> str:
         return "synthetic"
+
 
 # ===========================================================================
 # Tensor Schema Tests
@@ -93,13 +93,18 @@ class TestSafeTensorsSchema:
             tensors = load_file(str(shard_path))
 
             # Schema must use "targets", not the old PyTorch "labels" key
-            assert set(tensors.keys()) == {"input_ids", "attention_mask", "modality_mask", "targets"}
+            assert set(tensors.keys()) == {
+                "input_ids",
+                "attention_mask",
+                "modality_mask",
+                "targets",
+            }
             assert "labels" not in tensors
 
             # Correct dtypes (schema v2)
             assert tensors["input_ids"].dtype == np.int32
             assert tensors["targets"].dtype == np.int32
-            assert tensors["attention_mask"].dtype == np.uint8   # 4× smaller than int32
+            assert tensors["attention_mask"].dtype == np.uint8  # 4× smaller than int32
             assert tensors["modality_mask"].dtype == np.uint8
 
             # All tensors share (N, seq_len) shape

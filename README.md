@@ -39,8 +39,8 @@ Production-grade multimodal data processing pipeline for training [RT-DLM](https
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
 │  │              SafeTensors Shards (RT-DLM Compatible)                 │    │
 │  │  ┌───────────┐ ┌───────────────┐ ┌──────────────┐ ┌────────────┐    │    │
-│  │  │ input_ids │ │attention_mask │ │modality_mask │ │   labels   │    │    │
-│  │  │  int32    │ │    int32      │ │    uint8     │ │   int32    │    │    │
+│  │  │ input_ids │ │attention_mask │ │modality_mask │ │  targets   │    │    │
+│  │  │  int32    │ │    uint8      │ │    uint8     │ │   int32    │    │    │
 │  │  └───────────┘ └───────────────┘ └──────────────┘ └────────────┘    │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 │       │                                                                     │
@@ -65,7 +65,7 @@ Production-grade multimodal data processing pipeline for training [RT-DLM](https
 
 | Category | Feature | Status |
 |----------|---------|--------|
-| **Schema** | SafeTensors 4-tensor schema (`modality_mask`, `labels`) | ✅ |
+| **Schema** | SafeTensors 4-tensor schema v2 (`targets`, uint8 masks) | ✅ |
 | **Schema** | Video frame extraction + VQ tokenizer | ✅ |
 | **Schema** | 16 special tokens (`<IMG>`, `<VIDEO>`, `<FUSE>`, `<THINK>`, etc.) | ✅ |
 | **Quality** | GPT-2 perplexity filter | ✅ |
@@ -155,24 +155,39 @@ from safetensors.numpy import load_file
 shard = load_file("data/shards/shard_00000.safetensors")
 
 input_ids      = shard["input_ids"]       # (batch, seq_len) — int32
-attention_mask = shard["attention_mask"]   # (batch, seq_len) — int32
-modality_mask  = shard["modality_mask"]    # (batch, seq_len) — uint8 (0=text,1=img,2=aud,3=vid)
-labels         = shard["labels"]          # (batch, seq_len) — int32 (-100 = ignore)
+attention_mask = shard["attention_mask"]   # (batch, seq_len) — uint8 (1=real, 0=pad)
+modality_mask  = shard["modality_mask"]    # (batch, seq_len) — uint8 (0=text,1=img,2=aud,3=vid,4=code)
+targets        = shard["targets"]         # (batch, seq_len) — int32, right-shifted input_ids
+
+# targets[:, t] == input_ids[:, t+1]  (causal LM next-token prediction)
+# JAX uses attention_mask to zero out padding in the loss — no -100 ignore index.
 
 # Feed directly to RT-DLM training
 # python src/train.py --data-dir ./data/shards
 ```
 
-## SafeTensors Schema
+## SafeTensors Schema (v2)
 
-Every shard is RT-DLM compatible:
+Every shard is RT-DLM compatible. All sequences are padded/truncated to a fixed `seq_len` (default 2048) for JAX compatibility.
 
 | Tensor | Dtype | Shape | Description |
 |--------|-------|-------|-------------|
-| `input_ids` | int32 | (batch, seq_len) | All tokens (text + image + audio + video) |
-| `attention_mask` | int32 | (batch, seq_len) | 1 = real token, 0 = padding |
-| `modality_mask` | uint8 | (batch, seq_len) | 0=text, 1=image, 2=audio, 3=video |
-| `labels` | int32 | (batch, seq_len) | Causal LM labels (-100 = ignore special tokens) |
+| `input_ids` | int32 | (batch, seq_len) | All tokens (text + image + audio + video + code) |
+| `attention_mask` | uint8 | (batch, seq_len) | 1 = real token, 0 = padding |
+| `modality_mask` | uint8 | (batch, seq_len) | 0=text, 1=image, 2=audio, 3=video, 4=code |
+| `targets` | int32 | (batch, seq_len) | Right-shifted `input_ids` for causal LM (next-token prediction) |
+
+> **Schema v2 changes** (from v1): `labels` → `targets` (right-shifted, no −100 ignore index),
+> `attention_mask` dtype int32 → uint8 (4× memory savings), fixed-length padding,
+> SHA-256 checksums (was MD5).
+
+### Token ID Layout
+
+| Range | Purpose |
+|-------|---------|
+| 0–15 | Special tokens (see below) |
+| 16–271 | Byte tokens (`<byte_00>` – `<byte_ff>`) — lossless UTF-8 fallback |
+| 272+ | BPE merge tokens (learned vocabulary) |
 
 ### Special Tokens (IDs 0–15)
 
@@ -199,18 +214,22 @@ Every shard is RT-DLM compatible:
 
 ### Data Processing
 - Multi-source ingestion (HuggingFace, Common Crawl, local files, video)
+- Weighted round-robin interleaving across multiple sources
 - MinHash + FAISS embedding deduplication
 - Quality filtering (length, language, perplexity, LLM-as-Judge)
 - PII removal (automatic detection and redaction)
 - License compliance scanning for code data
 - Document extraction (PDF, DOCX, HTML, Markdown)
-- SafeTensors sharding with Zstd compression
+- SafeTensors sharding with Zstd compression and SHA-256 checksums
+- Streaming checkpointing with seeded reproducibility (numpy + stdlib RNG)
+- Deterministic resumption from checkpoint (skip-ahead + RNG state restore)
 
 ### Tokenization
-- Custom BPE tokenizer (16 special tokens, no external dependency)
+- Custom BPE tokenizer (16 special tokens, byte-level fallback, no external dependency)
+- 256 byte tokens (IDs 16–271) for lossless UTF-8 encoding of any input
+- LRU-bounded merge cache (100k entries) for fast encoding
 - Vector quantization for images, audio, and video
 - Multimodal token fusion with `encode_with_mask()`
-- Character-level fallback for OOV handling
 - Configurable vocab size (32k–128k)
 
 ### Quality & Compliance
@@ -246,6 +265,8 @@ pipeline:
   deduplicate: true
   quality_filter: true
   remove_pii: true
+  seed: 42                       # Reproducibility (numpy + stdlib RNG)
+  checkpoint_every: 10000        # Save resume checkpoint every N accepted samples
 
 advanced_quality:
   enabled: true
@@ -342,7 +363,7 @@ python scripts/train_tokenizer.py audio \
 | MinHash deduplication | 5k samples/sec | With LSH index |
 | FAISS dedup | 3k samples/sec | IVFFlat on CPU |
 | Perplexity filter | 500 samples/sec | GPT-2, GPU |
-| BPE encoding | <1 ms/sample | With caching |
+| BPE encoding | <1 ms/sample | LRU-cached (100k entries) |
 | SafeTensors writing | 50 MB/s | Zstd compressed |
 | Image tokenization | 50 ms/image | 224×224, 196 patches |
 | Video tokenization | 200 ms/video | 32 frames, uniform |
@@ -389,7 +410,7 @@ auralith_pipeline/
 │   ├── video_tokenizer.py        # Video VQ tokenizer
 │   └── tokenizer.py              # TokenizedSample + pipeline wrapper
 ├── sharding/
-│   └── shard_writer.py           # SafeTensors writer (4-tensor schema)
+│   └── shard_writer.py           # SafeTensors writer (4-tensor schema v2)
 ├── security/
 │   ├── pii_scrubber.py           # Multi-jurisdiction PII detection
 │   ├── data_sanitizer.py         # Credential / secret sanitization

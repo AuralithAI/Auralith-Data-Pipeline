@@ -343,9 +343,7 @@ class Pipeline:
             )
         return True
 
-    def _stage_security(
-        self, sample: DataSample, stats: PipelineStats
-    ) -> tuple[DataSample, bool]:
+    def _stage_security(self, sample: DataSample, stats: PipelineStats) -> tuple[DataSample, bool]:
         """Stage 3 — PII scrubbing + secrets sanitisation.
 
         Returns (sample, passed). Sample content is mutated in-place when PII is found.
@@ -475,9 +473,7 @@ class Pipeline:
 
         return True, tokens
 
-    def _periodic_checkpoint(
-        self, n_accepted: int, token_count: int, raw_total: int
-    ) -> None:
+    def _periodic_checkpoint(self, n_accepted: int, token_count: int, raw_total: int) -> None:
         """Save checkpoint and emit metrics every checkpoint_every accepted samples."""
         self._save_checkpoint(n_accepted, raw_total)
         logger.info(f"Processed {format_number(n_accepted)} samples…")
@@ -536,9 +532,9 @@ class Pipeline:
     def _restore_rng_state(self, checkpoint: dict) -> None:
         """Best-effort restoration of numpy RNG state from a checkpoint dict."""
         try:
-            state = list(np.random.get_state())   # mutable copy of the tuple
+            state = list(np.random.get_state())  # mutable copy of the tuple
             state[1] = np.array(checkpoint["numpy_rng_state"], dtype=np.uint32)  # type: ignore[index]
-            np.random.set_state(tuple(state))      # type: ignore[arg-type]
+            np.random.set_state(tuple(state))  # type: ignore[arg-type]
         except Exception as exc:
             logger.warning(f"RNG state restoration skipped: {exc}")
 
