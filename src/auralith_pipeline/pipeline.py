@@ -380,7 +380,7 @@ class Pipeline:
                     continue
 
                 # Track modality
-                modality = sample.metadata.get("modality", "text")
+                modality = sample.modality
                 stats.modalities[modality] = stats.modalities.get(modality, 0) + 1
 
                 # Lineage record
