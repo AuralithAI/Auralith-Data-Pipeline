@@ -12,6 +12,7 @@ from auralith_pipeline.tokenization.tokenizer import (
     TokenizedSample,
     Tokenizer,
 )
+from auralith_pipeline.tokenization.video_tokenizer import VideoTokenizer
 
 __all__ = [
     "BPETokenizer",
@@ -20,6 +21,7 @@ __all__ = [
     "TokenizationPipeline",
     "ImageTokenizer",
     "AudioTokenizer",
+    "VideoTokenizer",
     "VectorQuantizer",
     "MultimodalTokenizer",
 ]

@@ -23,7 +23,7 @@ class TestBPETokenizer:
         tokenizer = BPETokenizer(vocab_size=1000, min_frequency=2)
         assert tokenizer.vocab_size == 1000
         assert tokenizer.min_frequency == 2
-        assert len(tokenizer.SPECIAL_TOKENS) == 10
+        assert len(tokenizer.SPECIAL_TOKENS) == 16
         assert tokenizer.pad_token_id == 0
         assert tokenizer.unk_token_id == 1
 

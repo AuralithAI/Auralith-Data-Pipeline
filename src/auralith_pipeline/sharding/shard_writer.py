@@ -119,7 +119,14 @@ class ShardWriter:
         self._total_samples += 1
 
     def _flush_shard(self):
-        """Write current samples to a shard file."""
+        """Write current samples to a shard file.
+
+        SafeTensors schema (RT-DLM compatible):
+            input_ids:      int32  (batch, seq_len)  — all tokens
+            attention_mask: int32  (batch, seq_len)  — 1=real, 0=pad
+            modality_mask:  uint8  (batch, seq_len)  — 0=text,1=img,2=aud,3=vid,4=code
+            labels:         int32  (batch, seq_len)  — causal LM (-100=ignore)
+        """
         if not self._current_samples:
             return
 
@@ -128,6 +135,17 @@ class ShardWriter:
         # Convert samples to arrays
         input_ids = np.array([s.input_ids for s in self._current_samples], dtype=np.int32)
         attention_mask = np.array([s.attention_mask for s in self._current_samples], dtype=np.int32)
+        modality_mask = np.array(
+            [
+                s.modality_mask if s.modality_mask else [0] * len(s.input_ids)
+                for s in self._current_samples
+            ],
+            dtype=np.uint8,
+        )
+        labels = np.array(
+            [s.labels if s.labels else s.input_ids for s in self._current_samples],
+            dtype=np.int32,
+        )
 
         # Write SafeTensors
         try:
@@ -136,9 +154,28 @@ class ShardWriter:
             tensors = {
                 "input_ids": input_ids,
                 "attention_mask": attention_mask,
+                "modality_mask": modality_mask,
+                "labels": labels,
             }
 
-            save_file(tensors, str(shard_path))
+            # Collect per-shard metadata as JSON in the SafeTensors header
+            shard_metadata_dict = {
+                "pipeline_version": "2.0",
+                "schema_version": "1",
+                "shard_id": str(self._shard_count),
+                "num_samples": str(len(self._current_samples)),
+                "seq_length": str(input_ids.shape[1]) if input_ids.ndim > 1 else "variable",
+            }
+
+            # Gather sample-level metadata
+            sample_sources = []
+            for s in self._current_samples:
+                src = s.metadata.get("source", s.metadata.get("dataset", "unknown"))
+                if src not in sample_sources:
+                    sample_sources.append(src)
+            shard_metadata_dict["sources"] = ",".join(sample_sources)
+
+            save_file(tensors, str(shard_path), metadata=shard_metadata_dict)
 
             # Calculate checksum
             import hashlib
@@ -234,11 +271,15 @@ class ShardReader:
             data = self.read_shard(str(shard_path))
             input_ids = data["input_ids"]
             attention_mask = data["attention_mask"]
+            modality_mask = data.get("modality_mask")
+            labels = data.get("labels")
 
             for i in range(len(input_ids)):
                 yield TokenizedSample(
                     input_ids=input_ids[i].tolist(),
                     attention_mask=attention_mask[i].tolist(),
+                    modality_mask=modality_mask[i].tolist() if modality_mask is not None else None,
+                    labels=labels[i].tolist() if labels is not None else None,
                     metadata={"shard": shard_path.name},
                 )
 

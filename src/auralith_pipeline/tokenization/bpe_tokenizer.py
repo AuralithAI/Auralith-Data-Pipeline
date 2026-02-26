@@ -27,20 +27,43 @@ class BPETokenizer:
     - UTF-8 Unicode support
     """
 
-    # Special tokens (assigned IDs 0-9 for consistency)
+    # Special tokens (assigned IDs 0-15 for consistency)
     SPECIAL_TOKENS = {
         "<pad>": 0,
         "<unk>": 1,
         "<bos>": 2,  # Beginning of sequence
         "<eos>": 3,  # End of sequence
-        # Multimodal special tokens
-        "<image_start>": 4,
-        "<image_end>": 5,
-        "<audio_start>": 6,
-        "<audio_end>": 7,
-        "<video_start>": 8,
-        "<video_end>": 9,
+        # Multimodal special tokens — RT-DLM controller reads these
+        "<IMG>": 4,  # Image region start
+        "<IMG_END>": 5,  # Image region end
+        "<AUDIO>": 6,  # Audio region start
+        "<AUDIO_END>": 7,  # Audio region end
+        "<VIDEO>": 8,  # Video region start
+        "<VIDEO_END>": 9,  # Video region end
+        "<FUSE>": 10,  # Cross-modal fusion marker
+        "<SEP>": 11,  # Segment separator
+        "<MASK>": 12,  # Masked token (for MLM-style objectives)
+        "<CODE>": 13,  # Code region start
+        "<CODE_END>": 14,  # Code region end
+        "<THINK>": 15,  # Chain-of-thought marker
     }
+
+    # Backward-compat aliases for old names
+    _LEGACY_ALIASES = {
+        "<image_start>": "<IMG>",
+        "<image_end>": "<IMG_END>",
+        "<audio_start>": "<AUDIO>",
+        "<audio_end>": "<AUDIO_END>",
+        "<video_start>": "<VIDEO>",
+        "<video_end>": "<VIDEO_END>",
+    }
+
+    # Modality IDs for modality_mask tensor (RT-DLM compatible)
+    MODALITY_TEXT = 0
+    MODALITY_IMAGE = 1
+    MODALITY_AUDIO = 2
+    MODALITY_VIDEO = 3
+    MODALITY_CODE = 4
 
     # Word-end marker for BPE
     WORD_END = "</w>"
@@ -79,6 +102,9 @@ class BPETokenizer:
     def _initialize_special_tokens(self):
         """Initialize vocabulary with special tokens."""
         self.vocab = self.SPECIAL_TOKENS.copy()
+        # Also register legacy aliases pointing to the same IDs
+        for old_name, new_name in self._LEGACY_ALIASES.items():
+            self.vocab[old_name] = self.SPECIAL_TOKENS[new_name]
         self.id_to_token = {v: k for k, v in self.SPECIAL_TOKENS.items()}
 
     @property

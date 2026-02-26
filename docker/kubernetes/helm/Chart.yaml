@@ -1,0 +1,14 @@
+apiVersion: v2
+name: auralith-data-pipeline
+description: Helm chart for Auralith Data Pipeline — TB-scale multimodal data processing
+type: application
+version: 2.0.0
+appVersion: "2.0.0"
+keywords:
+  - data-pipeline
+  - machine-learning
+  - multimodal
+  - safetensors
+maintainers:
+  - name: AuralithAI
+    url: https://github.com/AuralithAI
