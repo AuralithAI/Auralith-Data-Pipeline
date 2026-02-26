@@ -272,35 +272,78 @@ class PIIScrubber:
 
         Returns:
             ScrubResult with cleaned text and redaction records.
+
+        Notes:
+            Redaction ``start`` / ``end`` offsets are byte offsets into the
+            *original* input ``text``, not the scrubbed output.
         """
         self.stats["texts_processed"] += 1
 
         redactions: list[Redaction] = []
         categories_found: set[PIICategory] = set()
 
-        cleaned = text
+        # Collect all matches against the original text so that offsets are
+        # stable and auditable, then apply replacements in a single pass.
+        match_records: list[tuple[int, int, PIICategory, str, str]] = []
 
         for pattern, category in self._compiled_patterns:
             if category not in self._active_categories:
                 continue
 
-            def _replace(match: re.Match[str], cat: PIICategory = category) -> str:
-                replacement = self._make_replacement(cat, match.group())
-                redactions.append(
-                    Redaction(
-                        category=cat,
-                        start=match.start(),
-                        end=match.end(),
-                        original_length=len(match.group()),
-                        replacement=replacement,
-                    )
+            for match in pattern.finditer(text):
+                original = match.group()
+                replacement = self._make_replacement(category, original)
+                match_records.append(
+                    (match.start(), match.end(), category, original, replacement)
                 )
-                categories_found.add(cat)
-                self.category_stats[cat] += 1
-                return replacement
 
-            cleaned = pattern.sub(_replace, cleaned)
+        if not match_records:
+            # Fast path: no PII detected, return early.
+            return ScrubResult(
+                cleaned_text=text,
+                redactions=redactions,
+                categories_found=categories_found,
+            )
 
+        # Sort by start position; for deterministic behavior on overlaps,
+        # sort by decreasing end when starts are equal so the longer span wins.
+        match_records.sort(key=lambda m: (m[0], -m[1]))
+
+        cleaned_parts: list[str] = []
+        cursor = 0
+        last_covered_end = 0
+
+        for start, end, category, original, replacement in match_records:
+            # Skip matches that overlap an already-applied redaction.
+            if start < last_covered_end:
+                continue
+
+            # Copy any non-PII text between the last cursor and this match.
+            if cursor < start:
+                cleaned_parts.append(text[cursor:start])
+
+            cleaned_parts.append(replacement)
+
+            redactions.append(
+                Redaction(
+                    category=category,
+                    start=start,
+                    end=end,
+                    original_length=len(original),
+                    replacement=replacement,
+                )
+            )
+            categories_found.add(category)
+            self.category_stats[category] += 1
+
+            cursor = end
+            last_covered_end = end
+
+        # Append any remaining tail after the last redaction.
+        if cursor < len(text):
+            cleaned_parts.append(text[cursor:])
+
+        cleaned = "".join(cleaned_parts)
         if redactions:
             self.stats["texts_with_pii"] += 1
             self.stats["total_redactions"] += len(redactions)
