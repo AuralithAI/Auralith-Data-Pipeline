@@ -1,6 +1,7 @@
 """Command-line interface for Auralith Data Pipeline."""
 
 import logging
+from pathlib import Path
 
 import click
 
@@ -11,6 +12,9 @@ from auralith_pipeline.storage.backends import create_storage_backend
 from auralith_pipeline.utils.helpers import format_size, setup_logging
 
 logger = logging.getLogger(__name__)
+
+_NPY_GLOB = "*.npy"
+_VIDEO_EXTS = frozenset({".mp4", ".avi", ".mov", ".mkv", ".webm"})
 
 
 @click.group()
@@ -165,6 +169,538 @@ def run(config_path: str):
     click.echo("Running pipeline...")
     stats = pipeline.run()
     click.echo(stats.summary())
+
+
+# ============================================================================
+# Tokenizer Training Commands
+# ============================================================================
+
+
+@main.group("train-tokenizer")
+def train_tokenizer():
+    """Train tokenizers for text and multimodal data.
+
+    \b
+    Examples:
+      auralith-pipeline train-tokenizer text  --corpus data/corpus.txt --output tokenizers/bpe_32k
+      auralith-pipeline train-tokenizer image --images data/images/    --output tokenizers/image_vq
+      auralith-pipeline train-tokenizer audio --audio  data/audio/     --output tokenizers/audio_vq
+      auralith-pipeline train-tokenizer video --videos data/videos/    --output tokenizers/video_vq
+      auralith-pipeline train-tokenizer all   --corpus data/corpus.txt --output tokenizers/
+    """
+    pass
+
+
+@train_tokenizer.command()
+@click.option(
+    "--corpus",
+    type=click.Path(exists=True),
+    required=True,
+    help="Path to text file or directory containing .txt training files",
+)
+@click.option("--output", "-o", type=click.Path(), required=True, help="Output directory")
+@click.option(
+    "--vocab-size", type=int, default=32000, help="Target vocabulary size (default: 32000)"
+)
+@click.option("--min-frequency", type=int, default=2, help="Min pair frequency for merging")
+@click.option("--lowercase", is_flag=True, help="Lowercase all text during training")
+@click.option(
+    "--max-corpus-size",
+    type=int,
+    default=None,
+    help="Max corpus size in characters (truncates single files, caps multi-file reads)",
+)
+def text(corpus, output, vocab_size, min_frequency, lowercase, max_corpus_size):
+    """Train BPE tokenizer on a text corpus."""
+    from auralith_pipeline.tokenization import BPETokenizer
+
+    corpus_path = Path(corpus)
+    output_path = Path(output)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    click.echo("=" * 60)
+    click.echo("Training BPE Text Tokenizer")
+    click.echo("=" * 60)
+    click.echo(f"  Corpus:     {corpus_path}")
+    click.echo(f"  Vocab size: {vocab_size}")
+    click.echo(f"  Output:     {output_path}")
+
+    tokenizer = BPETokenizer(
+        vocab_size=vocab_size,
+        min_frequency=min_frequency,
+        lowercase=lowercase,
+    )
+
+    if corpus_path.is_file():
+        click.echo(f"\nTraining from file: {corpus_path}")
+        if max_corpus_size:
+            raw = corpus_path.read_text(encoding="utf-8")
+            if len(raw) > max_corpus_size:
+                click.echo(
+                    f"  Truncating corpus from {len(raw):,} to {max_corpus_size:,} characters"
+                )
+                raw = raw[:max_corpus_size]
+            tokenizer.train(raw)
+        else:
+            tokenizer.train_from_file(corpus_path)
+    elif corpus_path.is_dir():
+        text_files: list[str | Path] = [str(p) for p in sorted(corpus_path.rglob("*.txt"))]
+        if not text_files:
+            click.echo("Error: No .txt files found in directory!", err=True)
+            raise SystemExit(1)
+        click.echo(f"\nTraining from {len(text_files)} files in {corpus_path}")
+        tokenizer.train_from_files(text_files, max_size=max_corpus_size)
+    else:
+        click.echo(f"Error: Corpus path not found: {corpus_path}", err=True)
+        raise SystemExit(1)
+
+    tokenizer.save(output_path)
+
+    click.echo(f"\n[OK] Text BPE tokenizer saved to {output_path}")
+    click.echo(f"  vocab={tokenizer.get_vocab_size()}, merges={len(tokenizer.merge_rules)}")
+
+
+@train_tokenizer.command()
+@click.option(
+    "--images",
+    type=click.Path(exists=True),
+    required=True,
+    help="Directory containing .npy image files",
+)
+@click.option("--output", "-o", type=click.Path(), required=True, help="Output directory")
+@click.option("--codebook-size", type=int, default=1024, help="VQ codebook size (default: 1024)")
+@click.option("--image-size", type=int, default=224, help="Target image size (default: 224)")
+@click.option("--patch-size", type=int, default=16, help="Patch size (default: 16)")
+@click.option("--sample-size", type=int, default=None, help="Max images to sample for training")
+def image(images, output, codebook_size, image_size, patch_size, sample_size):
+    """Train image VQ tokenizer on an image dataset (.npy format)."""
+    from auralith_pipeline.tokenization import ImageTokenizer
+
+    images_path = Path(images)
+    output_path = Path(output)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    image_files: list[str | Path] = [str(p) for p in sorted(images_path.rglob(_NPY_GLOB))]
+    if not image_files:
+        click.echo("Error: No .npy image files found!", err=True)
+        raise SystemExit(1)
+
+    click.echo("=" * 60)
+    click.echo("Training Image VQ Tokenizer")
+    click.echo("=" * 60)
+    click.echo(f"  Images:        {len(image_files)} files in {images_path}")
+    click.echo(f"  Image size:    {image_size}x{image_size}")
+    click.echo(f"  Patch size:    {patch_size}x{patch_size}")
+    click.echo(f"  Codebook size: {codebook_size}")
+    click.echo(f"  Output:        {output_path}")
+
+    tokenizer = ImageTokenizer(
+        image_size=image_size,
+        patch_size=patch_size,
+        codebook_size=codebook_size,
+    )
+    tokenizer.train(image_files, sample_size=sample_size)
+    tokenizer.save(output_path)
+
+    click.echo(f"\n[OK] Image VQ tokenizer saved to {output_path}")
+    click.echo(f"  codebook={codebook_size}, patches/img={tokenizer.num_patches}")
+
+
+@train_tokenizer.command()
+@click.option(
+    "--audio",
+    type=click.Path(exists=True),
+    required=True,
+    help="Directory containing .npy audio files",
+)
+@click.option("--output", "-o", type=click.Path(), required=True, help="Output directory")
+@click.option("--codebook-size", type=int, default=512, help="VQ codebook size (default: 512)")
+@click.option("--sample-rate", type=int, default=16000, help="Sample rate in Hz (default: 16000)")
+@click.option("--sample-size", type=int, default=None, help="Max audio files to sample")
+def audio(audio, output, codebook_size, sample_rate, sample_size):
+    """Train audio VQ tokenizer on an audio dataset (.npy format)."""
+    from auralith_pipeline.tokenization import AudioTokenizer
+
+    audio_path = Path(audio)
+    output_path = Path(output)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    audio_files: list[str | Path] = [str(p) for p in sorted(audio_path.rglob(_NPY_GLOB))]
+    if not audio_files:
+        click.echo("Error: No .npy audio files found!", err=True)
+        raise SystemExit(1)
+
+    click.echo("=" * 60)
+    click.echo("Training Audio VQ Tokenizer")
+    click.echo("=" * 60)
+    click.echo(f"  Audio files:   {len(audio_files)} files in {audio_path}")
+    click.echo(f"  Sample rate:   {sample_rate} Hz")
+    click.echo(f"  Codebook size: {codebook_size}")
+    click.echo(f"  Output:        {output_path}")
+
+    tokenizer = AudioTokenizer(
+        sample_rate=sample_rate,
+        codebook_size=codebook_size,
+    )
+    tokenizer.train(audio_files, sample_size=sample_size)
+    tokenizer.save(output_path)
+
+    click.echo(f"\n[OK] Audio VQ tokenizer saved to {output_path}")
+    click.echo(f"  codebook={codebook_size}")
+
+
+@train_tokenizer.command()
+@click.option(
+    "--videos",
+    type=click.Path(exists=True),
+    required=True,
+    help="Directory containing video files (.mp4, .avi, .mov, .mkv)",
+)
+@click.option("--output", "-o", type=click.Path(), required=True, help="Output directory")
+@click.option("--codebook-size", type=int, default=1024, help="VQ codebook size (default: 1024)")
+@click.option("--image-size", type=int, default=224, help="Frame resize (default: 224)")
+@click.option("--patch-size", type=int, default=16, help="Patch size (default: 16)")
+@click.option("--max-frames", type=int, default=32, help="Max frames per video (default: 32)")
+@click.option("--sample-size", type=int, default=None, help="Max videos to use for training")
+def video(videos, output, codebook_size, image_size, patch_size, max_frames, sample_size):
+    """Train video VQ tokenizer on a video dataset."""
+    from auralith_pipeline.tokenization import VideoTokenizer
+
+    videos_path = Path(videos)
+    output_path = Path(output)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    # Find video files
+    video_files: list[str | Path] = sorted(
+        str(p) for p in videos_path.rglob("*") if p.suffix.lower() in _VIDEO_EXTS
+    )
+    if not video_files:
+        click.echo("Error: No video files found (.mp4/.avi/.mov/.mkv/.webm)!", err=True)
+        raise SystemExit(1)
+
+    if sample_size and len(video_files) > sample_size:
+        video_files = video_files[:sample_size]
+
+    click.echo("=" * 60)
+    click.echo("Training Video VQ Tokenizer")
+    click.echo("=" * 60)
+    click.echo(f"  Videos:        {len(video_files)} files in {videos_path}")
+    click.echo(f"  Frame size:    {image_size}x{image_size}")
+    click.echo(f"  Patch size:    {patch_size}x{patch_size}")
+    click.echo(f"  Codebook size: {codebook_size}")
+    click.echo(f"  Max frames:    {max_frames}")
+    click.echo(f"  Output:        {output_path}")
+
+    tokenizer = VideoTokenizer(
+        image_size=image_size,
+        patch_size=patch_size,
+        codebook_size=codebook_size,
+        max_frames=max_frames,
+    )
+    # max_frames is intentionally used for both the constructor (encoding cap)
+    # and training (frames sampled per video) to keep the distribution aligned.
+    tokenizer.train_from_video_files(
+        video_files,
+        max_frames_per_video=max_frames,
+    )
+    tokenizer.save(output_path)
+
+    click.echo(f"\n[OK] Video VQ tokenizer saved to {output_path}")
+    click.echo(
+        f"  codebook={codebook_size}, patches/frame={tokenizer.patches_per_frame}, "
+        f"max_tokens/video={tokenizer.patches_per_frame * max_frames}"
+    )
+
+
+@train_tokenizer.command("all")
+@click.option(
+    "--corpus",
+    type=click.Path(exists=True),
+    default=None,
+    help="Text corpus file or directory (required for text modality)",
+)
+@click.option("--images", type=click.Path(exists=True), default=None, help="Image .npy directory")
+@click.option("--audio", type=click.Path(exists=True), default=None, help="Audio .npy directory")
+@click.option("--videos", type=click.Path(exists=True), default=None, help="Video files directory")
+@click.option("--output", "-o", type=click.Path(), required=True, help="Root output directory")
+@click.option("--vocab-size", type=int, default=32000, help="BPE vocab size")
+@click.option("--codebook-size", type=int, default=1024, help="VQ codebook size (image/video)")
+@click.option("--audio-codebook-size", type=int, default=512, help="Audio VQ codebook size")
+@click.option("--image-size", type=int, default=224, help="Image/frame resize (default: 224)")
+@click.option("--patch-size", type=int, default=16, help="Patch size for image/video (default: 16)")
+@click.option(
+    "--sample-rate", type=int, default=16000, help="Audio sample rate Hz (default: 16000)"
+)
+@click.option("--max-frames", type=int, default=32, help="Max frames per video (default: 32)")
+def train_all(
+    corpus,
+    images,
+    audio,
+    videos,
+    output,
+    vocab_size,
+    codebook_size,
+    audio_codebook_size,
+    image_size,
+    patch_size,
+    sample_rate,
+    max_frames,
+):
+    """Train ALL tokenizers in one command.
+
+    \b
+    Trains whichever modalities have data provided:
+      --corpus  → BPE text tokenizer   → <output>/text/
+      --images  → Image VQ tokenizer   → <output>/image/
+      --audio   → Audio VQ tokenizer   → <output>/audio/
+      --videos  → Video VQ tokenizer   → <output>/video/
+
+    \b
+    Example:
+      auralith-pipeline train-tokenizer all \\
+        --corpus data/corpus.txt \\
+        --images data/images/ \\
+        --audio  data/audio/ \\
+        --videos data/videos/ \\
+        --output tokenizers/ \\
+        --vocab-size 32000 \\
+        --codebook-size 1024 \\
+        --audio-codebook-size 512
+    """
+    output_root = Path(output)
+
+    if not any([corpus, images, audio, videos]):
+        click.echo("Error: provide at least one of --corpus, --images, --audio, --videos", err=True)
+        raise SystemExit(1)
+
+    click.echo("=" * 60)
+    click.echo("Training All Tokenizers")
+    click.echo("=" * 60)
+
+    trained = _train_all_modalities(
+        corpus=corpus,
+        images=images,
+        audio=audio,
+        videos=videos,
+        output_root=output_root,
+        vocab_size=vocab_size,
+        codebook_size=codebook_size,
+        audio_codebook_size=audio_codebook_size,
+        image_size=image_size,
+        patch_size=patch_size,
+        sample_rate=sample_rate,
+        max_frames=max_frames,
+    )
+
+    click.echo("\n" + "=" * 60)
+    if trained:
+        click.echo(f"[OK] Trained {len(trained)} tokenizer(s): {', '.join(trained)}")
+        click.echo(f"Output: {output_root}")
+    else:
+        click.echo("[WARNING] No tokenizers were trained")
+    click.echo("=" * 60)
+
+
+def _train_all_modalities(
+    *,
+    corpus: str | None,
+    images: str | None,
+    audio: str | None,
+    videos: str | None,
+    output_root: Path,
+    vocab_size: int,
+    codebook_size: int,
+    audio_codebook_size: int,
+    image_size: int,
+    patch_size: int,
+    sample_rate: int,
+    max_frames: int,
+) -> list[str]:
+    """Train each requested modality tokenizer and return list of trained names."""
+    trained: list[str] = []
+    modalities = [
+        ("Text BPE", corpus),
+        ("Image VQ", images),
+        ("Audio VQ", audio),
+        ("Video VQ", videos),
+    ]
+    active = [(name, val) for name, val in modalities if val]
+    total = len(active)
+    step = 0
+
+    # --- Text BPE ---
+    if corpus:
+        step += 1
+        trained += _train_text_bpe(corpus, output_root / "text", vocab_size, step, total)
+    else:
+        click.echo("\n  Text BPE  →  skipped (no --corpus)")
+
+    # --- Image VQ ---
+    if images:
+        step += 1
+        trained += _train_image_vq(
+            images, output_root / "image", codebook_size, image_size, patch_size, step, total
+        )
+    else:
+        click.echo("\n  Image VQ  →  skipped (no --images)")
+
+    # --- Audio VQ ---
+    if audio:
+        step += 1
+        trained += _train_audio_vq(
+            audio, output_root / "audio", audio_codebook_size, sample_rate, step, total
+        )
+    else:
+        click.echo("\n  Audio VQ  →  skipped (no --audio)")
+
+    # --- Video VQ ---
+    if videos:
+        step += 1
+        trained += _train_video_vq(
+            videos,
+            output_root / "video",
+            codebook_size,
+            image_size,
+            patch_size,
+            max_frames,
+            step,
+            total,
+        )
+    else:
+        click.echo("\n  Video VQ  →  skipped (no --videos)")
+
+    return trained
+
+
+def _train_text_bpe(
+    corpus: str, out_dir: Path, vocab_size: int, step: int, total: int
+) -> list[str]:
+    """Train BPE text tokenizer; returns ['text'] on success, else []."""
+    from auralith_pipeline.tokenization import BPETokenizer
+
+    corpus_path = Path(corpus)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    click.echo(f"\n[{step}/{total}] Text BPE  →  {out_dir}")
+
+    tokenizer = BPETokenizer(vocab_size=vocab_size)
+    if corpus_path.is_file():
+        tokenizer.train_from_file(corpus_path)
+    else:
+        txt_files: list[str | Path] = [str(p) for p in sorted(corpus_path.rglob("*.txt"))]
+        if txt_files:
+            tokenizer.train_from_files(txt_files)
+        else:
+            click.echo("  [SKIP] No .txt files found")
+            return []
+
+    if tokenizer.merge_rules:
+        tokenizer.save(out_dir)
+        click.echo(
+            f"  [OK] Text BPE tokenizer saved — "
+            f"vocab={tokenizer.get_vocab_size()}, merges={len(tokenizer.merge_rules)}"
+        )
+        return ["text"]
+    click.echo("  [SKIP] No merge rules learned")
+    return []
+
+
+def _train_image_vq(
+    images: str,
+    out_dir: Path,
+    codebook_size: int,
+    image_size: int,
+    patch_size: int,
+    step: int,
+    total: int,
+) -> list[str]:
+    """Train image VQ tokenizer; returns ['image'] on success, else []."""
+    from auralith_pipeline.tokenization import ImageTokenizer
+
+    images_path = Path(images)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    img_files: list[str | Path] = [str(p) for p in sorted(images_path.rglob(_NPY_GLOB))]
+    click.echo(f"\n[{step}/{total}] Image VQ  →  {out_dir}  ({len(img_files)} files)")
+
+    if img_files:
+        tok = ImageTokenizer(
+            image_size=image_size, patch_size=patch_size, codebook_size=codebook_size
+        )
+        tok.train(img_files)
+        tok.save(out_dir)
+        click.echo(
+            f"  [OK] Image VQ tokenizer saved — "
+            f"codebook={codebook_size}, patches/img={tok.num_patches}"
+        )
+        return ["image"]
+    click.echo("  [SKIP] No .npy files found")
+    return []
+
+
+def _train_audio_vq(
+    audio: str,
+    out_dir: Path,
+    codebook_size: int,
+    sample_rate: int,
+    step: int,
+    total: int,
+) -> list[str]:
+    """Train audio VQ tokenizer; returns ['audio'] on success, else []."""
+    from auralith_pipeline.tokenization import AudioTokenizer
+
+    audio_path = Path(audio)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    aud_files: list[str | Path] = [str(p) for p in sorted(audio_path.rglob(_NPY_GLOB))]
+    click.echo(f"\n[{step}/{total}] Audio VQ  →  {out_dir}  ({len(aud_files)} files)")
+
+    if aud_files:
+        tok = AudioTokenizer(sample_rate=sample_rate, codebook_size=codebook_size)
+        tok.train(aud_files)
+        tok.save(out_dir)
+        click.echo(f"  [OK] Audio VQ tokenizer saved — codebook={codebook_size}")
+        return ["audio"]
+    click.echo("  [SKIP] No .npy files found")
+    return []
+
+
+def _train_video_vq(
+    videos: str,
+    out_dir: Path,
+    codebook_size: int,
+    image_size: int,
+    patch_size: int,
+    max_frames: int,
+    step: int,
+    total: int,
+) -> list[str]:
+    """Train video VQ tokenizer; returns ['video'] on success, else []."""
+    from auralith_pipeline.tokenization import VideoTokenizer
+
+    videos_path = Path(videos)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    vid_files: list[str | Path] = [
+        str(p) for p in sorted(videos_path.rglob("*")) if p.suffix.lower() in _VIDEO_EXTS
+    ]
+    click.echo(f"\n[{step}/{total}] Video VQ  →  {out_dir}  ({len(vid_files)} files)")
+
+    if vid_files:
+        tok = VideoTokenizer(
+            image_size=image_size,
+            patch_size=patch_size,
+            codebook_size=codebook_size,
+            max_frames=max_frames,
+        )
+        tok.train_from_video_files(vid_files, max_frames_per_video=max_frames)
+        tok.save(out_dir)
+        click.echo(
+            f"  [OK] Video VQ tokenizer saved — "
+            f"codebook={codebook_size}, patches/frame={tok.patches_per_frame}"
+        )
+        return ["video"]
+    click.echo("  [SKIP] No video files found")
+    return []
 
 
 # ============================================================================
