@@ -67,8 +67,10 @@ class TestTrainTokenizerGroup:
 
     def test_group_no_subcommand(self, runner):
         result = runner.invoke(main, ["train-tokenizer"])
-        # Click shows help when no subcommand given
-        assert result.exit_code == 0
+        # Click shows help/usage when no subcommand is given.
+        # Exit code varies by Click version (0 or 2), so just check output.
+        assert result.exit_code in (0, 2)
+        assert "Usage" in result.output or "train-tokenizer" in result.output
 
 
 # ---------------------------------------------------------------------------
