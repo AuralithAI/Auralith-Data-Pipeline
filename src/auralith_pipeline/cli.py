@@ -442,7 +442,9 @@ def train_all(
         --audio  data/audio/ \\
         --videos data/videos/ \\
         --output tokenizers/ \\
-        --vocab-size 32000
+        --vocab-size 32000 \\
+        --codebook-size 1024 \\
+        --audio-codebook-size 512
     """
     output_root = Path(output)
 
