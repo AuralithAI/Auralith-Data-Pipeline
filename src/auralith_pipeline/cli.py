@@ -342,7 +342,7 @@ def audio(audio, output, codebook_size, sample_rate, sample_size):
         sample_rate=sample_rate,
         codebook_size=codebook_size,
     )
-    tokenizer.train(audio_files, sample_size=sample_size)  # type: ignore[arg-type]
+    tokenizer.train(audio_files, sample_size=sample_size)
     tokenizer.save(output_path)
 
     click.echo(f"\n[OK] Audio tokenizer saved to {output_path}")
