@@ -299,7 +299,7 @@ def image(images, output, codebook_size, image_size, patch_size, sample_size):
         patch_size=patch_size,
         codebook_size=codebook_size,
     )
-    tokenizer.train(image_files, sample_size=sample_size)  # type: ignore[arg-type]
+    tokenizer.train(image_files, sample_size=sample_size)
     tokenizer.save(output_path)
 
     click.echo(f"\n[OK] Image tokenizer saved to {output_path}")
