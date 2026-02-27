@@ -203,7 +203,12 @@ def train_tokenizer():
 )
 @click.option("--min-frequency", type=int, default=2, help="Min pair frequency for merging")
 @click.option("--lowercase", is_flag=True, help="Lowercase all text during training")
-@click.option("--max-corpus-size", type=int, default=None, help="Max corpus size in characters")
+@click.option(
+    "--max-corpus-size",
+    type=int,
+    default=None,
+    help="Max corpus size in characters (truncates single files, caps multi-file reads)",
+)
 def text(corpus, output, vocab_size, min_frequency, lowercase, max_corpus_size):
     """Train BPE tokenizer on a text corpus."""
     from auralith_pipeline.tokenization import BPETokenizer
@@ -227,7 +232,16 @@ def text(corpus, output, vocab_size, min_frequency, lowercase, max_corpus_size):
 
     if corpus_path.is_file():
         click.echo(f"\nTraining from file: {corpus_path}")
-        tokenizer.train_from_file(corpus_path)
+        if max_corpus_size:
+            raw = corpus_path.read_text(encoding="utf-8")
+            if len(raw) > max_corpus_size:
+                click.echo(
+                    f"  Truncating corpus from {len(raw):,} to {max_corpus_size:,} characters"
+                )
+                raw = raw[:max_corpus_size]
+            tokenizer.train(raw)
+        else:
+            tokenizer.train_from_file(corpus_path)
     elif corpus_path.is_dir():
         text_files: list[str | Path] = [str(p) for p in sorted(corpus_path.rglob("*.txt"))]
         if not text_files:
@@ -522,7 +536,7 @@ def _train_text_bpe(corpus: str, out_dir: Path, vocab_size: int) -> list[str]:
     if tokenizer.merge_rules:
         tokenizer.save(out_dir)
         click.echo(
-            f"  [OK] vocab={tokenizer.get_vocab_size()}, " f"merges={len(tokenizer.merge_rules)}"
+            f"  [OK] vocab={tokenizer.get_vocab_size()}, merges={len(tokenizer.merge_rules)}"
         )
         return ["text"]
     click.echo("  [SKIP] No merge rules learned")
