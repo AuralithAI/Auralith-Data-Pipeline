@@ -84,6 +84,7 @@ Production-grade multimodal data processing pipeline for training [RT-DLM](https
 | **Security** | Multi-jurisdiction PII scrubbing (15+ countries) | ✅ |
 | **Security** | Credential / secret sanitization | ✅ |
 | **Security** | IRSA / Workload Identity (no static keys) | ✅ |
+| **Pipeline** | `process` command: raw data → production `.safetensors` shards | ✅ |
 
 ## Installation
 
@@ -95,21 +96,29 @@ python -m venv venv
 source venv/bin/activate  # Linux/Mac
 # or .\venv\Scripts\activate  # Windows
 
-# Core installation
-pip install -e .
+# Recommended — install everything (includes multimodal, cloud, dev tools)
+pip install -e ".[all]"            # ~3 GB with PyTorch
 
-# With specific extras
-pip install -e ".[quality]"        # Perplexity filter + FAISS dedup
-pip install -e ".[tracking]"       # MLflow + W&B
-pip install -e ".[distributed]"    # Ray
-pip install -e ".[multimodal]"     # Video + image + audio
-pip install -e ".[cloud,pdf]"      # Cloud storage + PDF extraction
-pip install -e ".[all]"            # Everything (~3 GB with PyTorch)
+# Or install only what you need
+pip install -e .                   # Core only (text pipeline)
+pip install -e ".[quality]"        # + Perplexity filter + FAISS dedup
+pip install -e ".[tracking]"       # + MLflow + W&B
+pip install -e ".[distributed]"    # + Ray
+pip install -e ".[multimodal]"     # + Video + image + audio (PyTorch)
+pip install -e ".[cloud,pdf]"      # + Cloud storage + PDF extraction
 ```
+
+> **Tip:** If you plan to use the full CLI (tokenizer training, multimodal
+> processing, distributed jobs), install with `[all]` to avoid missing
+> dependency errors at runtime.
 
 ## Quick Start
 
 ### CLI Usage
+
+When you run any `auralith-pipeline` command, a vibrant startup banner is
+displayed with version and environment info.  Suppress it with `--no-banner`
+or set `AURALITH_NO_BANNER=1`.
 
 ```bash
 # List available datasets
@@ -121,12 +130,136 @@ auralith-pipeline collect \
   --output ./data/shards \
   --max-samples 100000 \
   --preset production
+```
 
-# Train custom BPE tokenizer
-python scripts/train_tokenizer.py text \
-  --corpus data/corpus.txt \
-  --output tokenizers/bpe_32k \
+### End-to-End Workflow: Raw Data → Trained Tokenizers → Production Shards
+
+The full pipeline has three stages:
+
+1. **Prepare raw data** — gather text, images, audio, and video into a folder
+2. **Train tokenizers** — learn BPE vocabulary + VQ codebooks from your data
+3. **Process** — tokenize everything and produce `.safetensors` shards for RT-DLM
+
+```
+  data/raw/              tokenizers/                    shards/
+  ├── docs/*.txt    ──►  ├── text/   (BPE)         ──►  ├── shard_000000.safetensors
+  ├── imgs/*.npy    ──►  ├── image/  (VQ codebook) ──►  ├── shard_000001.safetensors
+  ├── audio/*.npy   ──►  ├── audio/  (VQ codebook) ──►  └── ...
+  └── videos/*.mp4  ──►  └── video/  (VQ codebook) ──►
+```
+
+#### Step 1 — Prepare Raw Data
+
+Organise your data into a single directory. The pipeline auto-detects file types:
+
+| Modality | Accepted formats |
+|----------|-----------------|
+| Text | `.txt`, `.md`, `.rst`, `.csv`, `.json`, `.jsonl` |
+| Image | `.jpg`, `.jpeg`, `.png`, `.bmp`, `.tiff`, `.npy` |
+| Audio | `.wav`, `.flac`, `.ogg`, `.npy` |
+| Video | `.mp4`, `.avi`, `.mov`, `.mkv`, `.webm` |
+
+```bash
+data/raw/
+├── corpus/
+│   ├── wikipedia.txt
+│   └── books.txt
+├── images/
+│   ├── img_001.npy
+│   └── img_002.npy
+├── audio/
+│   ├── speech_001.npy
+│   └── speech_002.npy
+└── videos/
+    └── lecture_001.mp4
+```
+
+#### Step 2 — Train Tokenizers
+
+Train all modality tokenizers in one command:
+
+```bash
+auralith-pipeline train-tokenizer all \
+  --corpus  data/raw/corpus/ \
+  --images  data/raw/images/ \
+  --audio   data/raw/audio/ \
+  --videos  data/raw/videos/ \
+  --output  tokenizers/ \
+  --vocab-size 32000 \
+  --codebook-size 1024 \
+  --audio-codebook-size 512
+```
+
+This creates:
+
+```
+tokenizers/
+├── text/          # BPE tokenizer (vocab.json, merges.txt, config.json)
+├── image/         # Image VQ tokenizer (config.json, vq_codebook.json)
+├── audio/         # Audio VQ tokenizer (config.json, vq_codebook.json)
+└── video/         # Video VQ tokenizer (config.json, vq_codebook.json)
+```
+
+Or train each modality separately for finer control:
+
+```bash
+# Text BPE tokenizer
+auralith-pipeline train-tokenizer text \
+  --corpus data/raw/corpus/ \
+  --output tokenizers/text \
   --vocab-size 32000
+
+# Image VQ tokenizer
+auralith-pipeline train-tokenizer image \
+  --images data/raw/images/ \
+  --output tokenizers/image \
+  --codebook-size 1024 \
+  --image-size 224 \
+  --patch-size 16
+
+# Audio VQ tokenizer
+auralith-pipeline train-tokenizer audio \
+  --audio data/raw/audio/ \
+  --output tokenizers/audio \
+  --codebook-size 512 \
+  --sample-rate 16000
+
+# Video VQ tokenizer
+auralith-pipeline train-tokenizer video \
+  --videos data/raw/videos/ \
+  --output tokenizers/video \
+  --codebook-size 1024 \
+  --max-frames 32
+```
+
+> **Tip:** Store trained tokenizers in version control or cold storage (S3/GCS).
+> They are small (~2 MB each) and must stay frozen for the lifetime of a model.
+
+#### Step 3 — Process Raw Data into Shards
+
+```bash
+auralith-pipeline process \
+  --input  data/raw/ \
+  --output shards/ \
+  --tokenizers tokenizers/ \
+  --max-seq-len 4096 \
+  --shard-size 10000
+```
+
+Each shard is a `.safetensors` file with the [schema v2](#safetensors-schema-v2) tensors
+(`input_ids`, `attention_mask`, `modality_mask`, `targets`), ready for RT-DLM training.
+
+#### Step 4 — Feed into RT-DLM
+
+```bash
+# Upload shards to cloud storage
+auralith-pipeline upload --source shards/ --dest s3://my-bucket/training-data/
+
+# Or upload to HuggingFace Hub
+auralith-pipeline upload --source shards/ --dest hf://AuralithAI/training-shards
+
+# Train RT-DLM
+python src/train.py --data-dir shards/
 ```
 
 ### Python API
@@ -333,27 +466,109 @@ ray dashboard  # http://localhost:8265
 
 ## Tokenization
 
-### Train BPE Tokenizer
+### Training Tokenizers (Detailed Guide)
+
+Before you can process raw files into shards, you need trained tokenizers for each
+modality your model will consume. These tokenizers are **frozen artifacts** — once
+trained, they must not change for the entire model's lifecycle.
+
+#### Why train your own tokenizers?
+
+- **Text (BPE):** Learns subword units tuned to your domain vocabulary (e.g. medical, legal, code).
+- **Image (VQ):** Learns a discrete codebook that maps image patches → token IDs.
+- **Audio (VQ):** Learns a codebook over mel-spectrogram patches.
+- **Video (VQ):** Same as image, but trained on video frames for temporal consistency.
+
+#### Recommended Training Data Sizes
+
+| Modality | Minimum | Recommended | Notes |
+|----------|---------|-------------|-------|
+| Text | 1 MB | 1–10 GB | More data = better subword coverage |
+| Image | 100 images | 10k+ images | `.npy` arrays (H, W, 3) or JPEG/PNG |
+| Audio | 100 files | 10k+ files | `.npy` waveforms or `.wav/.flac` |
+| Video | 50 videos | 1k+ videos | `.mp4/.avi/.mov` — frames extracted automatically |
+
+#### Training Commands
 
 ```bash
-# Text tokenizer
-python scripts/train_tokenizer.py text \
-  --corpus data/train.txt \
-  --output tokenizers/bpe_32k \
-  --vocab-size 32000
+# All at once (recommended)
+auralith-pipeline train-tokenizer all \
+  --corpus  data/corpus/ \
+  --images  data/images/ \
+  --audio   data/audio/ \
+  --videos  data/videos/ \
+  --output  tokenizers/ \
+  --vocab-size 32000 \
+  --codebook-size 1024 \
+  --audio-codebook-size 512 \
+  --image-size 224 \
+  --patch-size 16 \
+  --sample-rate 16000 \
+  --max-frames 32
 
-# Image tokenizer (VQ codebook)
-python scripts/train_tokenizer.py image \
-  --images data/images/ \
-  --output tokenizers/image_vq \
-  --codebook-size 1024
-
-# Audio tokenizer
-python scripts/train_tokenizer.py audio \
-  --audio data/audio/ \
-  --output tokenizers/audio_vq \
-  --codebook-size 512
+# Or individually
+auralith-pipeline train-tokenizer text  --corpus data/corpus.txt --output tokenizers/text --vocab-size 32000
+auralith-pipeline train-tokenizer image --images data/images/    --output tokenizers/image --codebook-size 1024
+auralith-pipeline train-tokenizer audio --audio  data/audio/     --output tokenizers/audio --codebook-size 512
+auralith-pipeline train-tokenizer video --videos data/videos/    --output tokenizers/video --codebook-size 1024
 ```
+
+#### Output Structure
+
+```
+tokenizers/
+├── text/
+│   ├── vocab.json       # Token → ID mapping
+│   ├── merges.txt       # BPE merge rules (ordered)
+│   └── config.json      # Tokenizer hyperparameters
+├── image/
+│   ├── config.json      # image_size, patch_size, codebook_size
+│   └── vq_codebook.json # Learned VQ centroids
+├── audio/
+│   ├── config.json      # sample_rate, n_fft, codebook_size
+│   └── vq_codebook.json
+└── video/
+    ├── config.json      # image_size, patch_size, max_frames
+    └── vq_codebook.json
+```
+
+> **Cold Storage:** Archive `tokenizers/` to S3/GCS alongside your model checkpoints.
+> The `process` command reads these frozen tokenizers at inference time.
+
+### Processing Raw Data into Shards
+
+Once tokenizers are trained, use `process` to convert raw files into production shards:
+
+```bash
+auralith-pipeline process \
+  --input  data/raw/ \
+  --output shards/ \
+  --tokenizers tokenizers/ \
+  --max-seq-len 4096 \
+  --shard-size 10000
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--input` | — | Folder with raw `.txt/.jpg/.wav/.mp4` etc. |
+| `--output` | — | Where `.safetensors` shards are written |
+| `--tokenizers` | — | Root folder containing `text/`, `image/`, `audio/`, `video/` subdirs |
+| `--max-seq-len` | 4096 | Maximum token sequence length per sample |
+| `--shard-size` | 10000 | Maximum samples per shard file |
+
+Each shard contains 4 tensors matching the [SafeTensors Schema v2](#safetensors-schema-v2):
+`input_ids`, `attention_mask`, `modality_mask`, and `targets`.
+
+### Token ID Layout
+
+| Range | Purpose |
+|-------|---------|
+| 0–15 | Special tokens (see below) |
+| 16–271 | Byte tokens (`<byte_00>` – `<byte_ff>`) — lossless UTF-8 fallback |
+| 272+ | BPE merge tokens (learned vocabulary) |
+| 100,000+ | Image VQ codes (offset to avoid collisions) |
+| 200,000+ | Audio VQ codes |
+| 300,000+ | Video VQ codes |
 
 ## Performance
 
@@ -391,7 +606,7 @@ mypy src/
 
 ```
 auralith_pipeline/
-├── cli.py                        # CLI commands
+├── cli.py                        # CLI commands (collect, process, train-tokenizer, etc.)
 ├── pipeline.py                   # Main pipeline (tracking, compliance, security)
 ├── config/                       # Configuration management
 │   └── pipeline_config.py        # All config dataclasses
@@ -433,6 +648,7 @@ docker/kubernetes/
     └── templates/
 
 tests/
+├── test_cli.py                   # CLI command tests (process, train-tokenizer, etc.)
 ├── test_pipeline.py              # Core pipeline tests
 ├── test_tokenization.py          # Tokenizer tests
 ├── test_e2e_schema.py            # E2E validation

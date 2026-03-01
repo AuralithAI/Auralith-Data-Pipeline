@@ -11,12 +11,22 @@ import pytest
 from click.testing import CliRunner
 
 from auralith_pipeline.cli import (
+    _AUDIO_EXTS,
+    _BANNER_ART,
+    _IMAGE_EXTS,
+    _MODALITY_ID,
+    _TEXT_EXTS,
     _VIDEO_EXTS,
+    _classify_file,
+    _load_all_tokenizers,
+    _print_banner,
+    _tokenize_file,
     _train_all_modalities,
     _train_audio_vq,
     _train_image_vq,
     _train_text_bpe,
     _train_video_vq,
+    _write_shards,
     main,
 )
 
@@ -729,3 +739,414 @@ class TestSuccessMessageFormat:
         assert result.exit_code == 0
         assert "[OK] Audio VQ tokenizer saved to" in result.output
         assert "codebook=" in result.output
+
+
+# ===========================================================================
+# Process command tests
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# File classification
+# ---------------------------------------------------------------------------
+
+
+class TestClassifyFile:
+    """Test the _classify_file helper."""
+
+    def test_text_extensions(self, tmp_path):
+        for ext in [".txt", ".md", ".rst", ".csv", ".json", ".jsonl"]:
+            p = tmp_path / f"file{ext}"
+            assert _classify_file(p) == "text"
+
+    def test_image_extensions(self, tmp_path):
+        for ext in [".jpg", ".jpeg", ".png", ".bmp", ".tiff"]:
+            p = tmp_path / f"file{ext}"
+            assert _classify_file(p) == "image"
+
+    def test_audio_extensions(self, tmp_path):
+        for ext in [".wav", ".flac", ".ogg"]:
+            p = tmp_path / f"file{ext}"
+            assert _classify_file(p) == "audio"
+
+    def test_video_extensions(self, tmp_path):
+        for ext in [".mp4", ".avi", ".mov", ".mkv", ".webm"]:
+            p = tmp_path / f"file{ext}"
+            assert _classify_file(p) == "video"
+
+    def test_unsupported_extension(self, tmp_path):
+        assert _classify_file(tmp_path / "file.xyz") is None
+        assert _classify_file(tmp_path / "file.pdf") is None
+
+    def test_npy_is_image(self, tmp_path):
+        # .npy can be image or audio; _classify_file checks _IMAGE_EXTS first
+        assert _classify_file(tmp_path / "data.npy") == "image"
+
+
+# ---------------------------------------------------------------------------
+# Extension constants
+# ---------------------------------------------------------------------------
+
+
+class TestExtensionConstants:
+    """Verify extension sets are correct."""
+
+    def test_text_exts(self):
+        assert ".txt" in _TEXT_EXTS
+        assert ".md" in _TEXT_EXTS
+
+    def test_image_exts(self):
+        assert ".jpg" in _IMAGE_EXTS
+        assert ".png" in _IMAGE_EXTS
+
+    def test_audio_exts(self):
+        assert ".wav" in _AUDIO_EXTS
+        assert ".flac" in _AUDIO_EXTS
+
+    def test_modality_ids(self):
+        assert _MODALITY_ID == {"text": 0, "image": 1, "audio": 2, "video": 3}
+
+
+# ---------------------------------------------------------------------------
+# _load_all_tokenizers
+# ---------------------------------------------------------------------------
+
+
+class TestLoadAllTokenizers:
+    """Test _load_all_tokenizers helper."""
+
+    def test_empty_dir_returns_all_none(self, tmp_path):
+        result = _load_all_tokenizers(tmp_path)
+        assert result == {"text": None, "image": None, "audio": None, "video": None}
+
+    def test_loads_text_tokenizer(self, tmp_path):
+        """Train a small BPE tokenizer, save it, and verify _load_all_tokenizers finds it."""
+        from auralith_pipeline.tokenization import BPETokenizer
+
+        tok = BPETokenizer(vocab_size=500)
+        tok.train("hello world test data " * 100)
+
+        text_dir = tmp_path / "text"
+        tok.save(text_dir)
+
+        result = _load_all_tokenizers(tmp_path)
+        assert result["text"] is not None
+        assert result["image"] is None
+        assert result["audio"] is None
+        assert result["video"] is None
+
+
+# ---------------------------------------------------------------------------
+# _tokenize_file
+# ---------------------------------------------------------------------------
+
+
+class TestTokenizeFile:
+    """Test _tokenize_file helper."""
+
+    @pytest.fixture()
+    def text_tokenizer(self, tmp_path):
+        from auralith_pipeline.tokenization import BPETokenizer
+
+        tok = BPETokenizer(vocab_size=500)
+        tok.train("hello world test data " * 100)
+        return tok
+
+    def test_tokenize_text_file(self, tmp_path, text_tokenizer):
+        txt = tmp_path / "sample.txt"
+        txt.write_text("hello world this is a test")
+
+        tokenizers = {"text": text_tokenizer, "image": None, "audio": None, "video": None}
+        result = _tokenize_file(txt, tokenizers, max_seq_len=4096)
+
+        assert result is not None
+        assert "input_ids" in result
+        assert "modality_mask" in result
+        assert "source" in result
+        assert len(result["input_ids"]) == len(result["modality_mask"])
+        assert all(m == 0 for m in result["modality_mask"])  # text = modality 0
+
+    def test_tokenize_empty_text_returns_none(self, tmp_path, text_tokenizer):
+        txt = tmp_path / "empty.txt"
+        txt.write_text("   ")
+
+        tokenizers = {"text": text_tokenizer, "image": None, "audio": None, "video": None}
+        result = _tokenize_file(txt, tokenizers, max_seq_len=4096)
+        assert result is None
+
+    def test_tokenize_unsupported_ext_returns_none(self, tmp_path, text_tokenizer):
+        pdf = tmp_path / "doc.pdf"
+        pdf.write_text("fake pdf")
+
+        tokenizers = {"text": text_tokenizer, "image": None, "audio": None, "video": None}
+        result = _tokenize_file(pdf, tokenizers, max_seq_len=4096)
+        assert result is None
+
+    def test_tokenize_no_tokenizer_returns_none(self, tmp_path):
+        txt = tmp_path / "sample.txt"
+        txt.write_text("hello world")
+
+        tokenizers = {"text": None, "image": None, "audio": None, "video": None}
+        result = _tokenize_file(txt, tokenizers, max_seq_len=4096)
+        assert result is None
+
+    def test_tokenize_truncates_to_max_seq_len(self, tmp_path, text_tokenizer):
+        txt = tmp_path / "long.txt"
+        txt.write_text("word " * 10000)
+
+        tokenizers = {"text": text_tokenizer, "image": None, "audio": None, "video": None}
+        result = _tokenize_file(txt, tokenizers, max_seq_len=128)
+
+        assert result is not None
+        assert len(result["input_ids"]) <= 128
+        assert len(result["modality_mask"]) <= 128
+
+
+# ---------------------------------------------------------------------------
+# _write_shards
+# ---------------------------------------------------------------------------
+
+
+class TestWriteShards:
+    """Test _write_shards helper."""
+
+    def test_write_single_shard(self, tmp_path):
+        samples = [
+            {"input_ids": [1, 2, 3, 4], "modality_mask": [0, 0, 0, 0], "source": "a.txt"},
+            {"input_ids": [5, 6, 7], "modality_mask": [0, 0, 0], "source": "b.txt"},
+        ]
+        out = tmp_path / "shards"
+        out.mkdir()
+
+        num_shards = _write_shards(samples, out, max_seq_len=16, shard_size=100)
+        assert num_shards == 1
+
+        shard_files = list(out.glob("*.safetensors"))
+        assert len(shard_files) == 1
+        assert shard_files[0].name == "shard_000000.safetensors"
+
+    def test_write_multiple_shards(self, tmp_path):
+        samples = [{"input_ids": [i], "modality_mask": [0], "source": f"{i}.txt"} for i in range(5)]
+        out = tmp_path / "shards"
+        out.mkdir()
+
+        num_shards = _write_shards(samples, out, max_seq_len=8, shard_size=2)
+        assert num_shards == 3  # 2+2+1
+
+    def test_shard_schema(self, tmp_path):
+        """Verify safetensors shard contains all required tensors with correct shapes."""
+        from safetensors.numpy import load_file
+
+        samples = [
+            {"input_ids": [10, 20, 30], "modality_mask": [0, 1, 0], "source": "test.txt"},
+        ]
+        out = tmp_path / "shards"
+        out.mkdir()
+
+        _write_shards(samples, out, max_seq_len=8, shard_size=100)
+
+        data = load_file(str(out / "shard_000000.safetensors"))
+        assert "input_ids" in data
+        assert "attention_mask" in data
+        assert "modality_mask" in data
+        assert "targets" in data
+
+        # Shape: (1 sample, 8 seq_len)
+        assert data["input_ids"].shape == (1, 8)
+        assert data["attention_mask"].shape == (1, 8)
+        assert data["modality_mask"].shape == (1, 8)
+        assert data["targets"].shape == (1, 8)
+
+        # Verify padding
+        assert data["input_ids"][0, 0] == 10
+        assert data["input_ids"][0, 3] == 0  # padded
+        assert data["attention_mask"][0, 0] == 1
+        assert data["attention_mask"][0, 3] == 0  # padded
+
+        # Verify targets = right-shifted input_ids
+        assert data["targets"][0, 0] == 20  # input_ids[0, 1]
+        assert data["targets"][0, 1] == 30  # input_ids[0, 2]
+
+
+# ---------------------------------------------------------------------------
+# process CLI command (integration)
+# ---------------------------------------------------------------------------
+
+
+class TestProcessCommand:
+    """Integration tests for the `process` CLI command."""
+
+    @pytest.fixture()
+    def trained_text_tokenizer_dir(self, tmp_path):
+        """Create a tokenizers/ directory with a trained text BPE tokenizer."""
+        from auralith_pipeline.tokenization import BPETokenizer
+
+        tok = BPETokenizer(vocab_size=500)
+        tok.train("hello world test data the quick brown fox " * 200)
+
+        tok_dir = tmp_path / "tokenizers" / "text"
+        tok.save(tok_dir)
+        return tmp_path / "tokenizers"
+
+    def test_process_text_files(self, runner, tmp_path, trained_text_tokenizer_dir):
+        raw = tmp_path / "raw"
+        raw.mkdir()
+        (raw / "doc1.txt").write_text("the quick brown fox jumps over the lazy dog")
+        (raw / "doc2.txt").write_text("hello world this is a test document")
+
+        out = tmp_path / "shards"
+
+        result = runner.invoke(
+            main,
+            [
+                "process",
+                "--input",
+                str(raw),
+                "--output",
+                str(out),
+                "--tokenizers",
+                str(trained_text_tokenizer_dir),
+                "--max-seq-len",
+                "128",
+                "--shard-size",
+                "100",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "[OK] Created" in result.output
+        assert "shard(s)" in result.output
+
+        shard_files = list(out.glob("*.safetensors"))
+        assert len(shard_files) >= 1
+
+    def test_process_no_tokenizers_error(self, runner, tmp_path):
+        raw = tmp_path / "raw"
+        raw.mkdir()
+        (raw / "doc.txt").write_text("test")
+
+        empty_tok = tmp_path / "empty_tok"
+        empty_tok.mkdir()
+
+        out = tmp_path / "shards"
+
+        result = runner.invoke(
+            main,
+            [
+                "process",
+                "--input",
+                str(raw),
+                "--output",
+                str(out),
+                "--tokenizers",
+                str(empty_tok),
+            ],
+        )
+        assert result.exit_code != 0
+        assert "No tokenizers found" in result.output
+
+    def test_process_empty_input_error(self, runner, tmp_path, trained_text_tokenizer_dir):
+        raw = tmp_path / "empty_raw"
+        raw.mkdir()
+        out = tmp_path / "shards"
+
+        result = runner.invoke(
+            main,
+            [
+                "process",
+                "--input",
+                str(raw),
+                "--output",
+                str(out),
+                "--tokenizers",
+                str(trained_text_tokenizer_dir),
+            ],
+        )
+        assert result.exit_code != 0
+        assert "No files found" in result.output
+
+    def test_process_help(self, runner):
+        result = runner.invoke(main, ["process", "--help"])
+        assert result.exit_code == 0
+        assert "--input" in result.output
+        assert "--output" in result.output
+        assert "--tokenizers" in result.output
+        assert "--max-seq-len" in result.output
+        assert "--shard-size" in result.output
+
+    def test_process_shard_contents_are_valid(self, runner, tmp_path, trained_text_tokenizer_dir):
+        """Verify the generated shard has correct schema v2 format."""
+        from safetensors.numpy import load_file
+
+        raw = tmp_path / "raw"
+        raw.mkdir()
+        (raw / "doc.txt").write_text("the quick brown fox jumps over the lazy dog " * 10)
+
+        out = tmp_path / "shards"
+
+        result = runner.invoke(
+            main,
+            [
+                "process",
+                "--input",
+                str(raw),
+                "--output",
+                str(out),
+                "--tokenizers",
+                str(trained_text_tokenizer_dir),
+                "--max-seq-len",
+                "64",
+                "--shard-size",
+                "100",
+            ],
+        )
+        assert result.exit_code == 0
+
+        shard = load_file(str(out / "shard_000000.safetensors"))
+        assert shard["input_ids"].dtype.name == "int32"
+        assert shard["attention_mask"].dtype.name == "uint8"
+        assert shard["modality_mask"].dtype.name == "uint8"
+        assert shard["targets"].dtype.name == "int32"
+
+        # All modality mask values should be 0 (text)
+        assert (shard["modality_mask"][shard["attention_mask"] == 1] == 0).all()
+
+
+# ---------------------------------------------------------------------------
+# Banner / startup UI
+# ---------------------------------------------------------------------------
+
+
+class TestBanner:
+    """Test the startup banner and --no-banner flag."""
+
+    def test_banner_art_contains_auralith(self):
+        """The ASCII art should spell out AURALITH."""
+        # The banner uses box-drawing characters; verify key letters are present
+        assert "██" in _BANNER_ART
+        assert "╗" in _BANNER_ART or "╔" in _BANNER_ART
+
+    def test_print_banner_runs_without_error(self, capsys):
+        """_print_banner should never crash, even outside a real terminal."""
+        _print_banner()  # should not raise
+
+    def test_no_banner_flag_suppresses_output(self, runner):
+        """--no-banner should suppress the startup banner."""
+        result = runner.invoke(main, ["--no-banner", "--help"])
+        assert result.exit_code == 0
+        # The help text should still appear
+        assert "Auralith Data Pipeline" in result.output
+
+    def test_banner_not_shown_in_non_tty(self, runner, monkeypatch):
+        """Banner is auto-suppressed when stderr is not a TTY (e.g. tests)."""
+        import io
+
+        monkeypatch.setattr("sys.stderr", io.StringIO())
+        result = runner.invoke(main, ["--help"])
+        assert result.exit_code == 0
+
+    def test_no_banner_env_var(self, runner, monkeypatch):
+        """AURALITH_NO_BANNER env var suppresses the banner."""
+        monkeypatch.setenv("AURALITH_NO_BANNER", "1")
+        result = runner.invoke(main, ["--help"])
+        assert result.exit_code == 0
+        assert "Auralith Data Pipeline" in result.output

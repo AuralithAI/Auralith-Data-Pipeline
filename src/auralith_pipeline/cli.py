@@ -1,10 +1,14 @@
 """Command-line interface for Auralith Data Pipeline."""
 
 import logging
+import platform
+import sys
 from pathlib import Path
+from typing import Any
 
 import click
 
+from auralith_pipeline import __version__
 from auralith_pipeline.config.pipeline_config import PipelineConfig
 from auralith_pipeline.pipeline import Pipeline
 from auralith_pipeline.sources.data_sources import DATASET_REGISTRY, create_source
@@ -15,12 +19,82 @@ logger = logging.getLogger(__name__)
 
 _NPY_GLOB = "*.npy"
 _VIDEO_EXTS = frozenset({".mp4", ".avi", ".mov", ".mkv", ".webm"})
+_TEXT_EXTS = frozenset({".txt", ".md", ".rst", ".csv", ".json", ".jsonl"})
+_IMAGE_EXTS = frozenset({".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".npy"})
+_AUDIO_EXTS = frozenset({".wav", ".flac", ".ogg", ".npy"})
+_CONFIG_JSON = "config.json"
+
+# ── ASCII banner ──────────────────────────────────────────────────────────
+# Displayed once when the CLI starts.  Uses Rich markup for gradient color.
+_BANNER_ART = r"""
+[bold bright_magenta]       █████╗  ██╗   ██╗ ██████╗   █████╗  ██╗      ██╗ ████████╗ ██╗  ██╗[/]
+[bold magenta]      ██╔══██╗ ██║   ██║ ██╔══██╗ ██╔══██╗ ██║      ██║ ╚══██╔══╝ ██║  ██║[/]
+[bold bright_cyan]      ███████║ ██║   ██║ ██████╔╝ ███████║ ██║      ██║    ██║    ███████║[/]
+[bold cyan]      ██╔══██║ ██║   ██║ ██╔══██╗ ██╔══██║ ██║      ██║    ██║    ██╔══██║[/]
+[bold bright_blue]      ██║  ██║ ╚██████╔╝ ██║  ██║ ██║  ██║ ███████╗ ██║    ██║    ██║  ██║[/]
+[bold blue]      ╚═╝  ╚═╝  ╚═════╝  ╚═╝  ╚═╝ ╚═╝  ╚═╝ ╚══════╝ ╚═╝    ╚═╝    ╚═╝  ╚═╝[/]
+"""
+
+_BANNER_TAGLINE = "[bold bright_white]Multimodal Data Pipeline for RT-DLM[/bold bright_white]"
+
+
+def _print_banner() -> None:
+    """Print the vibrant startup banner using Rich."""
+    try:
+        from rich.console import Console
+        from rich.panel import Panel
+
+        console = Console(stderr=True)
+
+        # Build info line
+        py_ver = platform.python_version()
+        os_name = platform.system()
+        info_line = (
+            f"[bold green]v{__version__}[/]  "
+            f"[dim]•[/dim]  [white]Python {py_ver}[/]  "
+            f"[dim]•[/dim]  [white]{os_name}[/]"
+        )
+
+        body = _BANNER_ART + "\n" + _BANNER_TAGLINE + "\n" + info_line
+
+        console.print(
+            Panel(
+                body,
+                border_style="bright_magenta",
+                padding=(0, 2),
+                subtitle="[dim italic]github.com/AuralithAI[/]",
+                subtitle_align="right",
+            )
+        )
+
+        # Tips
+        console.print(
+            "[dim]Getting started:[/dim]\n"
+            "  [bold cyan]1.[/] Run [bold cyan]auralith-pipeline --help[/] "
+            "to see all commands.\n"
+            "  [bold cyan]2.[/] Use [bold cyan]-v[/] for verbose / debug output.\n"
+            "  [bold cyan]3.[/] Install all extras: "
+            '[bold yellow]pip install "auralith-data-pipeline\\[all]"[/]\n',
+            highlight=False,
+        )
+    except Exception:  # noqa: BLE001 – never crash on a cosmetic banner
+        # Graceful fallback – plain text
+        click.echo(f"Auralith Data Pipeline  v{__version__}")
 
 
 @click.group()
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose output")
-def main(verbose: bool):
+@click.option(
+    "--no-banner",
+    is_flag=True,
+    default=False,
+    envvar="AURALITH_NO_BANNER",
+    help="Suppress the startup banner",
+)
+def main(verbose: bool, no_banner: bool):
     """Auralith Data Pipeline - Production-grade data processing for LLMs."""
+    if not no_banner and sys.stderr.isatty():
+        _print_banner()
     level = "DEBUG" if verbose else "INFO"
     setup_logging(level)
 
@@ -701,6 +775,357 @@ def _train_video_vq(
         return ["video"]
     click.echo("  [SKIP] No video files found")
     return []
+
+
+# ============================================================================
+# Process Command — Raw Data → Production SafeTensors Shards
+# ============================================================================
+
+
+@main.command()
+@click.option(
+    "--input",
+    "-i",
+    "input_dir",
+    type=click.Path(exists=True),
+    required=True,
+    help="Folder with raw files (.txt, .jpg, .png, .wav, .mp4, .npy, etc.)",
+)
+@click.option(
+    "--output",
+    "-o",
+    "output_dir",
+    type=click.Path(),
+    required=True,
+    help="Where .safetensors shards are written",
+)
+@click.option(
+    "--tokenizers",
+    "tokenizers_dir",
+    type=click.Path(exists=True),
+    required=True,
+    help="Root folder of trained tokenizers (text/, image/, audio/, video/ subdirs)",
+)
+@click.option(
+    "--max-seq-len",
+    type=int,
+    default=4096,
+    help="Maximum sequence length per sample (default: 4096)",
+)
+@click.option(
+    "--shard-size",
+    type=int,
+    default=10000,
+    help="Max samples per shard (default: 10000)",
+)
+def process(
+    input_dir: str, output_dir: str, tokenizers_dir: str, max_seq_len: int, shard_size: int
+):
+    """Process raw files → production-ready .safetensors shards.
+
+    \b
+    Takes a folder of mixed raw data (text, images, audio, video) and
+    uses frozen tokenizers to produce sharded SafeTensors files with
+    input_ids, attention_mask, modality_mask, and targets.
+
+    \b
+    The tokenizers directory should contain subdirectories created by
+    `train-tokenizer all`:
+        tokenizers/
+        ├── text/     (vocab.json, merges.txt, config.json)
+        ├── image/    (config.json, vq_codebook.json)
+        ├── audio/    (config.json, vq_codebook.json)
+        └── video/    (config.json, vq_codebook.json)
+
+    \b
+    Example:
+        auralith-pipeline process \\
+            --input  data/raw/ \\
+            --output shards/ \\
+            --tokenizers tokenizers/ \\
+            --max-seq-len 4096 \\
+            --shard-size 10000
+    """
+    in_path = Path(input_dir)
+    out_path = Path(output_dir)
+    tok_path = Path(tokenizers_dir)
+
+    click.echo("=" * 60)
+    click.echo("Processing Raw Data → SafeTensors Shards")
+    click.echo("=" * 60)
+    click.echo(f"  Input:       {in_path}")
+    click.echo(f"  Output:      {out_path}")
+    click.echo(f"  Tokenizers:  {tok_path}")
+    click.echo(f"  Max seq len: {max_seq_len}")
+    click.echo(f"  Shard size:  {shard_size}")
+
+    # ------------------------------------------------------------------
+    # 1. Load tokenizers
+    # ------------------------------------------------------------------
+    click.echo("\n[1/3] Loading tokenizers ...")
+    tokenizers = _load_all_tokenizers(tok_path)
+    loaded = [name for name, tok in tokenizers.items() if tok is not None]
+    if not loaded:
+        click.echo("[ERROR] No tokenizers found in the tokenizers directory!", err=True)
+        raise SystemExit(1)
+    click.echo(f"  Loaded: {', '.join(loaded)}")
+
+    # ------------------------------------------------------------------
+    # 2. Discover & tokenize raw files
+    # ------------------------------------------------------------------
+    click.echo("\n[2/3] Tokenizing raw files ...")
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    raw_files = sorted(p for p in in_path.rglob("*") if p.is_file())
+    if not raw_files:
+        click.echo("[ERROR] No files found in input directory!", err=True)
+        raise SystemExit(1)
+
+    click.echo(f"  Found {len(raw_files)} files")
+
+    samples: list[dict[str, Any]] = []
+    skipped = 0
+
+    for idx, file_path in enumerate(raw_files):
+        if (idx + 1) % 500 == 0:
+            click.echo(f"  ... processed {idx + 1}/{len(raw_files)}")
+
+        result = _tokenize_file(file_path, tokenizers, max_seq_len)
+        if result is not None:
+            samples.append(result)
+        else:
+            skipped += 1
+
+    click.echo(f"  Tokenized {len(samples)} files ({skipped} skipped)")
+
+    if not samples:
+        click.echo("[ERROR] No files could be tokenized!", err=True)
+        raise SystemExit(1)
+
+    # ------------------------------------------------------------------
+    # 3. Pack into shards and write SafeTensors
+    # ------------------------------------------------------------------
+    click.echo("\n[3/3] Writing shards ...")
+    num_shards = _write_shards(samples, out_path, max_seq_len, shard_size)
+
+    click.echo("\n" + "=" * 60)
+    click.echo(
+        f"[OK] Created {num_shards} shard(s) in {out_path}  "
+        f"({len(samples)} samples, max_seq_len={max_seq_len})"
+    )
+    click.echo("=" * 60)
+
+
+# ---- process helpers -----------------------------------------------------
+
+
+def _load_all_tokenizers(tokenizers_dir: Path) -> dict[str, Any]:
+    """Load all available tokenizers from a directory.
+
+    Looks for subdirectories named text/, image/, audio/, video/ and
+    loads the corresponding tokenizer class from each.
+
+    Returns:
+        Dict mapping modality name → tokenizer instance (or None if absent).
+    """
+    result: dict[str, Any] = {"text": None, "image": None, "audio": None, "video": None}
+
+    text_dir = tokenizers_dir / "text"
+    if text_dir.is_dir() and (text_dir / "vocab.json").exists():
+        from auralith_pipeline.tokenization import BPETokenizer
+
+        result["text"] = BPETokenizer.load(text_dir)
+        logger.info("Loaded text BPE tokenizer from %s", text_dir)
+
+    image_dir = tokenizers_dir / "image"
+    if image_dir.is_dir() and (image_dir / _CONFIG_JSON).exists():
+        from auralith_pipeline.tokenization import ImageTokenizer
+
+        result["image"] = ImageTokenizer.load(image_dir)
+        logger.info("Loaded image VQ tokenizer from %s", image_dir)
+
+    audio_dir = tokenizers_dir / "audio"
+    if audio_dir.is_dir() and (audio_dir / _CONFIG_JSON).exists():
+        from auralith_pipeline.tokenization import AudioTokenizer
+
+        result["audio"] = AudioTokenizer.load(audio_dir)
+        logger.info("Loaded audio VQ tokenizer from %s", audio_dir)
+
+    video_dir = tokenizers_dir / "video"
+    if video_dir.is_dir() and (video_dir / _CONFIG_JSON).exists():
+        from auralith_pipeline.tokenization import VideoTokenizer
+
+        result["video"] = VideoTokenizer.load(video_dir)
+        logger.info("Loaded video VQ tokenizer from %s", video_dir)
+
+    return result
+
+
+def _classify_file(file_path: Path) -> str | None:
+    """Return the modality name for a file, or None if unsupported."""
+    ext = file_path.suffix.lower()
+    if ext in _TEXT_EXTS:
+        return "text"
+    if ext in _IMAGE_EXTS:
+        return "image"
+    if ext in _AUDIO_EXTS:
+        return "audio"
+    if ext in _VIDEO_EXTS:
+        return "video"
+    return None
+
+
+# Modality mask values — must match BPETokenizer.MODALITY_*
+_MODALITY_ID = {"text": 0, "image": 1, "audio": 2, "video": 3}
+
+# Token offsets to avoid ID collisions across modalities
+_IMAGE_TOKEN_OFFSET = 100_000
+_AUDIO_TOKEN_OFFSET = 200_000
+_VIDEO_TOKEN_OFFSET = 300_000
+
+
+def _tokenize_file(
+    file_path: Path,
+    tokenizers: dict[str, Any],
+    max_seq_len: int,
+) -> dict[str, Any] | None:
+    """Tokenize a single raw file and return input_ids + modality_mask.
+
+    Returns None if the file type is unsupported or the relevant tokenizer
+    is not available.
+    """
+    modality = _classify_file(file_path)
+    if modality is None:
+        return None
+
+    tokenizer = tokenizers.get(modality)
+    if tokenizer is None:
+        return None
+
+    try:
+        if modality == "text":
+            text = file_path.read_text(encoding="utf-8", errors="replace")
+            if not text.strip():
+                return None
+            input_ids = tokenizer.encode(text, add_special_tokens=True, max_length=max_seq_len)
+            modality_mask = [_MODALITY_ID["text"]] * len(input_ids)
+
+        elif modality == "image":
+            codes = tokenizer.encode(file_path)
+            # Wrap with special tokens: <IMG> [codes] <IMG_END>
+            from auralith_pipeline.tokenization import BPETokenizer
+
+            img_start = BPETokenizer.SPECIAL_TOKENS["<IMG>"]
+            img_end = BPETokenizer.SPECIAL_TOKENS["<IMG_END>"]
+            input_ids = [img_start] + [c + _IMAGE_TOKEN_OFFSET for c in codes] + [img_end]
+            modality_mask = [_MODALITY_ID["image"]] * len(input_ids)
+
+        elif modality == "audio":
+            codes = tokenizer.encode(file_path)
+            from auralith_pipeline.tokenization import BPETokenizer
+
+            aud_start = BPETokenizer.SPECIAL_TOKENS["<AUDIO>"]
+            aud_end = BPETokenizer.SPECIAL_TOKENS["<AUDIO_END>"]
+            input_ids = [aud_start] + [c + _AUDIO_TOKEN_OFFSET for c in codes] + [aud_end]
+            modality_mask = [_MODALITY_ID["audio"]] * len(input_ids)
+
+        elif modality == "video":
+            codes = tokenizer.encode(file_path)
+            from auralith_pipeline.tokenization import BPETokenizer
+
+            vid_start = BPETokenizer.SPECIAL_TOKENS["<VIDEO>"]
+            vid_end = BPETokenizer.SPECIAL_TOKENS["<VIDEO_END>"]
+            input_ids = [vid_start] + [c + _VIDEO_TOKEN_OFFSET for c in codes] + [vid_end]
+            modality_mask = [_MODALITY_ID["video"]] * len(input_ids)
+
+        else:
+            return None
+
+        # Truncate to max_seq_len
+        input_ids = input_ids[:max_seq_len]
+        modality_mask = modality_mask[:max_seq_len]
+
+        return {
+            "input_ids": input_ids,
+            "modality_mask": modality_mask,
+            "source": str(file_path),
+        }
+
+    except Exception as e:
+        logger.warning("Failed to tokenize %s: %s", file_path, e)
+        return None
+
+
+def _write_shards(
+    samples: list[dict[str, Any]],
+    output_dir: Path,
+    max_seq_len: int,
+    shard_size: int,
+) -> int:
+    """Pack tokenized samples into fixed-length SafeTensors shards.
+
+    Each shard contains up to ``shard_size`` samples. Every sample is
+    padded/truncated to ``max_seq_len``.
+
+    Returns the number of shards written.
+    """
+    import numpy as np
+
+    try:
+        from safetensors.numpy import save_file
+    except ImportError:
+        click.echo(
+            "[ERROR] safetensors is not installed. Install with: pip install safetensors",
+            err=True,
+        )
+        raise SystemExit(1) from None
+
+    shard_idx = 0
+    for start in range(0, len(samples), shard_size):
+        batch = samples[start : start + shard_size]
+
+        input_ids_arr = np.zeros((len(batch), max_seq_len), dtype=np.int32)
+        attention_mask_arr = np.zeros((len(batch), max_seq_len), dtype=np.uint8)
+        modality_mask_arr = np.zeros((len(batch), max_seq_len), dtype=np.uint8)
+
+        for i, sample in enumerate(batch):
+            ids = sample["input_ids"]
+            mask = sample["modality_mask"]
+            seq_len = min(len(ids), max_seq_len)
+
+            input_ids_arr[i, :seq_len] = ids[:seq_len]
+            attention_mask_arr[i, :seq_len] = 1
+            modality_mask_arr[i, :seq_len] = mask[:seq_len]
+
+        # targets = right-shifted input_ids (causal LM next-token prediction)
+        targets_arr = np.zeros_like(input_ids_arr)
+        targets_arr[:, :-1] = input_ids_arr[:, 1:]
+
+        shard_path = output_dir / f"shard_{shard_idx:06d}.safetensors"
+
+        metadata = {
+            "pipeline_version": "2.0",
+            "schema_version": "2",
+            "shard_id": str(shard_idx),
+            "num_samples": str(len(batch)),
+            "seq_length": str(max_seq_len),
+        }
+
+        save_file(
+            {
+                "input_ids": input_ids_arr,
+                "attention_mask": attention_mask_arr,
+                "modality_mask": modality_mask_arr,
+                "targets": targets_arr,
+            },
+            str(shard_path),
+            metadata=metadata,
+        )
+
+        click.echo(f"  Wrote {shard_path.name} ({len(batch)} samples)")
+        shard_idx += 1
+
+    return shard_idx
 
 
 # ============================================================================
