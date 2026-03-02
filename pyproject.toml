@@ -121,6 +121,7 @@ source = "vcs"
 
 [tool.hatch.version.raw-options]
 version_scheme = "no-guess-dev"
+fallback_version = "0.0.0-dev"
 
 [tool.hatch.build.hooks.vcs]
 version-file = "src/auralith_pipeline/_version.py"
