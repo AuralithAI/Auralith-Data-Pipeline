@@ -197,24 +197,30 @@ class Worker:
                 self._record_result(job_id, task_id, success=False)
 
     def _record_result(self, job_id: str, task_id: str, *, success: bool) -> None:
-        """Update the job counters in the state store (coordinator-side)."""
+        """Atomically update the job counters in the state store.
+
+        Uses ``StateStore.atomic_update`` so that concurrent workers
+        cannot lose each other's counter increments.
+        """
         if self.state_store is None:
             return
-        job = self.state_store.get(f"job:{job_id}")
-        if not job:
-            return
-        if success:
-            job["completed_tasks"] = job.get("completed_tasks", 0) + 1
-        else:
-            job["failed_tasks"] = job.get("failed_tasks", 0) + 1
 
-        total = job.get("total_tasks", 0)
-        done = job.get("completed_tasks", 0) + job.get("failed_tasks", 0)
-        if total > 0 and done >= total:
-            job["status"] = "completed"
-            job["completed_at"] = datetime.now().isoformat()
+        def _update(job: dict | None) -> dict | None:
+            if job is None:
+                return None
+            if success:
+                job["completed_tasks"] = job.get("completed_tasks", 0) + 1
+            else:
+                job["failed_tasks"] = job.get("failed_tasks", 0) + 1
 
-        self.state_store.set(f"job:{job_id}", job)
+            total = job.get("total_tasks", 0)
+            done = job.get("completed_tasks", 0) + job.get("failed_tasks", 0)
+            if total > 0 and done >= total:
+                job["status"] = "completed"
+                job["completed_at"] = datetime.now().isoformat()
+            return job
+
+        self.state_store.atomic_update(f"job:{job_id}", _update)
 
     # ── real pipeline task execution ──────────────────────────────────
 
@@ -225,17 +231,15 @@ class Worker:
         ------------------
         files : list[str]          – absolute paths to raw files
         tokenizers_dir : str       – path to tokenizers/ directory
-        output_dir : str           – shard output directory
+        output_dir : str           – shard output directory (task-specific subdirectory)
         max_seq_len : int          – maximum sequence length (default 4096)
         shard_size : int           – samples per shard (default 10000)
-        shard_offset : int         – starting shard index (default 0)
         """
         files = task.get("files", [])
         tokenizers_dir = Path(task["tokenizers_dir"])
         output_dir = Path(task["output_dir"])
         max_seq_len: int = task.get("max_seq_len", 4096)
         shard_size: int = task.get("shard_size", 10_000)
-        shard_offset: int = task.get("shard_offset", 0)
 
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -272,8 +276,8 @@ class Worker:
                 "status": "no_samples",
             }
 
-        # 3. Write shards
-        num_shards = self._write_shards(samples, output_dir, max_seq_len, shard_size, shard_offset)
+        # 3. Write shards (each task has its own output_dir, so start at 0)
+        num_shards = self._write_shards(samples, output_dir, max_seq_len, shard_size)
 
         return {
             "samples_processed": len(samples),
@@ -396,9 +400,12 @@ class Worker:
         output_dir: Path,
         max_seq_len: int,
         shard_size: int,
-        shard_offset: int = 0,
     ) -> int:
-        """Pack tokenized samples into SafeTensors shards."""
+        """Pack tokenized samples into SafeTensors shards.
+
+        Each task writes to its own subdirectory, so shard indices
+        always start at 0 — no offset needed, no collision possible.
+        """
         import numpy as np
 
         try:
@@ -409,7 +416,7 @@ class Worker:
                 "Install with: pip install safetensors"
             ) from None
 
-        shard_idx = shard_offset
+        shard_idx = 0
         for start in range(0, len(samples), shard_size):
             batch = samples[start : start + shard_size]
 
@@ -449,7 +456,7 @@ class Worker:
             logger.info("Wrote %s (%d samples)", shard_path.name, len(batch))
             shard_idx += 1
 
-        return shard_idx - shard_offset
+        return shard_idx
 
 
 # ── WorkerPool ─────────────────────────────────────────────────────────

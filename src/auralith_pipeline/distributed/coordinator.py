@@ -60,16 +60,26 @@ class JobManager:
         self.state_store.set(f"job:{job_id}", job)
 
     def record_task_result(self, job_id: str, task_id: str, *, success: bool) -> None:
-        """Increment completed/failed counter for a job."""
-        job = self.jobs.get(job_id) or self.state_store.get(f"job:{job_id}")
-        if not job:
-            return
-        if success:
-            job["completed_tasks"] = job.get("completed_tasks", 0) + 1
-        else:
-            job["failed_tasks"] = job.get("failed_tasks", 0) + 1
-        self.jobs[job_id] = job
-        self.state_store.set(f"job:{job_id}", job)
+        """Atomically increment completed/failed counter for a job.
+
+        Uses ``StateStore.atomic_update`` so that concurrent callers
+        cannot lose each other's counter increments.  The local
+        ``self.jobs`` cache is refreshed from the authoritative value
+        returned by the state store.
+        """
+
+        def _update(job: dict | None) -> dict | None:
+            if job is None:
+                return None
+            if success:
+                job["completed_tasks"] = job.get("completed_tasks", 0) + 1
+            else:
+                job["failed_tasks"] = job.get("failed_tasks", 0) + 1
+            return job
+
+        updated = self.state_store.atomic_update(f"job:{job_id}", _update)
+        if updated is not None:
+            self.jobs[job_id] = updated
 
     # ------------------------------------------------------------------
     # Task submission

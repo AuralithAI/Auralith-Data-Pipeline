@@ -3,6 +3,7 @@
 All tests use the InMemoryStateStore so they run without Redis.
 """
 
+import threading
 import time
 from pathlib import Path
 
@@ -90,6 +91,54 @@ class TestInMemoryStateStore:
         store.set_heartbeat("w1")
         store.delete("heartbeat:w1")
         assert store.get_all_workers() == []
+
+    def test_atomic_update_basic(self):
+        store = InMemoryStateStore()
+        store.set("counter", {"value": 0})
+
+        def inc(current):
+            current["value"] += 1
+            return current
+
+        result = store.atomic_update("counter", inc)
+        assert result == {"value": 1}
+        assert store.get("counter") == {"value": 1}
+
+    def test_atomic_update_missing_key(self):
+        store = InMemoryStateStore()
+
+        def init(current):
+            if current is None:
+                return {"value": 42}
+            return current
+
+        result = store.atomic_update("new_key", init)
+        assert result == {"value": 42}
+
+    def test_atomic_update_thread_safety(self):
+        """Concurrent atomic_update calls must not lose increments."""
+        store = InMemoryStateStore()
+        store.set("job:stress", {"completed_tasks": 0})
+        n_threads = 20
+        increments_per_thread = 50
+        barrier = threading.Barrier(n_threads)
+
+        def worker():
+            barrier.wait()
+            for _ in range(increments_per_thread):
+                def inc(job):
+                    job["completed_tasks"] = job.get("completed_tasks", 0) + 1
+                    return job
+                store.atomic_update("job:stress", inc)
+
+        threads = [threading.Thread(target=worker) for _ in range(n_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        job = store.get("job:stress")
+        assert job["completed_tasks"] == n_threads * increments_per_thread
 
 
 # =====================================================================
@@ -361,10 +410,9 @@ class TestWorker:
             "retries": 0,
             "files": [str(txt)],
             "tokenizers_dir": str(tmp_path / "tokenizers"),
-            "output_dir": str(tmp_path / "output"),
+            "output_dir": str(tmp_path / "output" / "task_task-1"),
             "max_seq_len": 128,
             "shard_size": 100,
-            "shard_offset": 0,
         }
         # Create the job in state store so result recording works
         store.set(
@@ -493,6 +541,11 @@ class TestDistributedPipelineTaskCreation:
         assert len(tasks[3]["files"]) == 1
         # All tasks reference the correct job
         assert all(t["job_id"] == "j1" for t in tasks)
+        # Each task has its own output subdirectory (no shard_offset)
+        output_dirs = [t["output_dir"] for t in tasks]
+        assert len(set(output_dirs)) == 4  # all unique
+        assert all("task_" in d for d in output_dirs)
+        assert all("shard_offset" not in t for t in tasks)
 
     def test_create_tasks_single_chunk(self):
         from auralith_pipeline.distributed.pipeline import DistributedPipeline
@@ -509,6 +562,8 @@ class TestDistributedPipelineTaskCreation:
         )
         assert len(tasks) == 1
         assert len(tasks[0]["files"]) == 2
+        assert "task_" in tasks[0]["output_dir"]
+        assert "shard_offset" not in tasks[0]
 
 
 # =====================================================================

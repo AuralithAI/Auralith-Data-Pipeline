@@ -110,60 +110,62 @@ class DistributedPipeline:
         if self.embedded:
             self._start_embedded()
 
-        # 3. Connect to state store
-        state_store = self._get_state_store()
+        try:
+            # 3. Connect to state store
+            state_store = self._get_state_store()
 
-        # 4. Create job
-        job_id = str(uuid.uuid4())
-        job: dict[str, Any] = {
-            "id": job_id,
-            "status": "pending",
-            "config": {
-                "input_dir": input_dir,
-                "output_dir": output_dir,
-                "tokenizers_dir": tokenizers_dir,
-                "max_seq_len": max_seq_len,
-                "shard_size": shard_size,
-            },
-            "tasks": [],
-            "total_tasks": 0,
-            "completed_tasks": 0,
-            "failed_tasks": 0,
-        }
-        state_store.set(f"job:{job_id}", job)
-        logger.info("Created job %s", job_id)
-
-        # 5. Split files into tasks
-        tasks = self._create_tasks(
-            job_id=job_id,
-            files=raw_files,
-            tokenizers_dir=str(tokenizers_dir),
-            output_dir=str(out_path),
-            max_seq_len=max_seq_len,
-            shard_size=shard_size,
-            files_per_task=files_per_task,
-        )
-        logger.info("Created %d tasks (%d files/task)", len(tasks), files_per_task)
-
-        # 6. Submit tasks
-        if self._coordinator is not None:
-            # Embedded — submit via coordinator's JobManager directly
-            self._coordinator.job_manager.create_job(job_id, job.get("config", {}))
-            self._coordinator.job_manager.submit_tasks(job_id, tasks)
-        else:
-            # External — push tasks + update job in state store
-            job["total_tasks"] = len(tasks)
-            job["status"] = "running"
+            # 4. Create job
+            job_id = str(uuid.uuid4())
+            job: dict[str, Any] = {
+                "id": job_id,
+                "status": "pending",
+                "config": {
+                    "input_dir": input_dir,
+                    "output_dir": output_dir,
+                    "tokenizers_dir": tokenizers_dir,
+                    "max_seq_len": max_seq_len,
+                    "shard_size": shard_size,
+                },
+                "tasks": [],
+                "total_tasks": 0,
+                "completed_tasks": 0,
+                "failed_tasks": 0,
+            }
             state_store.set(f"job:{job_id}", job)
-            for task in tasks:
-                state_store.push_queue("pending_tasks", task)
+            logger.info("Created job %s", job_id)
 
-        # 7. Poll until done
-        result = self._poll_job(state_store, job_id, timeout, poll_interval)
+            # 5. Split files into tasks
+            tasks = self._create_tasks(
+                job_id=job_id,
+                files=raw_files,
+                tokenizers_dir=str(tokenizers_dir),
+                output_dir=str(out_path),
+                max_seq_len=max_seq_len,
+                shard_size=shard_size,
+                files_per_task=files_per_task,
+            )
+            logger.info("Created %d tasks (%d files/task)", len(tasks), files_per_task)
 
-        # 8. Tear down embedded infra
-        if self.embedded:
-            self._stop_embedded()
+            # 6. Submit tasks
+            if self._coordinator is not None:
+                # Embedded — submit via coordinator's JobManager directly
+                self._coordinator.job_manager.create_job(job_id, job.get("config", {}))
+                self._coordinator.job_manager.submit_tasks(job_id, tasks)
+            else:
+                # External — push tasks + update job in state store
+                job["total_tasks"] = len(tasks)
+                job["status"] = "running"
+                state_store.set(f"job:{job_id}", job)
+                for task in tasks:
+                    state_store.push_queue("pending_tasks", task)
+
+            # 7. Poll until done
+            result = self._poll_job(state_store, job_id, timeout, poll_interval)
+
+        finally:
+            # 8. Tear down embedded infra (always, even on exception)
+            if self.embedded:
+                self._stop_embedded()
 
         return result
 
@@ -182,24 +184,32 @@ class DistributedPipeline:
         shard_size: int,
         files_per_task: int,
     ) -> list[dict[str, Any]]:
-        """Split file list into task dicts."""
+        """Split file list into task dicts.
+
+        Each task writes shards to its own subdirectory
+        (``output_dir/task_{task_id}/``) so that shard indices never
+        collide — even when a single task produces multiple shards.
+        """
         num_tasks = max(1, math.ceil(len(files) / files_per_task))
         tasks: list[dict[str, Any]] = []
 
         for i in range(num_tasks):
+            task_id = str(uuid.uuid4())
             chunk = files[i * files_per_task : (i + 1) * files_per_task]
+            # Each task gets its own output subdirectory to avoid shard
+            # index collisions when a task produces more than one shard.
+            task_output_dir = str(Path(output_dir) / f"task_{task_id}")
             tasks.append(
                 {
-                    "id": str(uuid.uuid4()),
+                    "id": task_id,
                     "job_id": job_id,
                     "status": "pending",
                     "retries": 0,
                     "files": chunk,
                     "tokenizers_dir": tokenizers_dir,
-                    "output_dir": output_dir,
+                    "output_dir": task_output_dir,
                     "max_seq_len": max_seq_len,
                     "shard_size": shard_size,
-                    "shard_offset": i * shard_size,
                 }
             )
 
