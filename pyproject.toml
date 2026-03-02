@@ -139,10 +139,12 @@ packages = ["src/auralith_pipeline"]
 line-length = 100
 target-version = ["py310", "py311", "py312"]
 include = '\.pyi?$'
+extend-exclude = '_version\.py'
 
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+exclude = ["src/auralith_pipeline/_version.py"]
 
 [tool.ruff.lint]
 select = [
