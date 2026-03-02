@@ -8,8 +8,7 @@ Production-grade multimodal data processing pipeline for training [RT-DLM](https
 
 ## Architecture
 
-<img width="1861" height="1841" alt="RT-DLM_architecture_transformer_style_v2-Data Pipeline drawio" src="https://github.com/user-attachments/assets/d4efbca1-ad1f-4953-a11f-ed75c3f78d95" />
-
+<img width="1802" height="1841" alt="RT-DLM_architecture_transformer_style_v2-Data Pipeline-Data Pipeline" src="https://github.com/user-attachments/assets/01e9c52e-49aa-4ca3-bc48-2e8c769b2234" />
 
 ## Capabilities
 
