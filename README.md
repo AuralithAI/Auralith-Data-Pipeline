@@ -830,41 +830,28 @@ export WANDB_API_KEY=xxxxx
 
 ## Releasing
 
-Releases are **fully automated** with zero-touch versioning. There are **no hardcoded version strings** anywhere in the source — the version is derived entirely from git tags at build time via [`hatch-vcs`](https://github.com/ofek/hatch-vcs).
+Every merge to `main` automatically tests, builds, publishes to PyPI, and creates a GitHub Release — zero manual steps.
 
 ### How it works
 
-Every PR merge to `main` triggers the full release cycle:
+1. **Test** — Python 3.10 / 3.11 / 3.12
+2. **Build** — sdist + universal `py3-none-any` wheel
+3. **Tag** — auto-increments patch (`v0.1.2` → `v0.1.3`)
+4. **Publish** — pushes to PyPI via OIDC trusted publisher
+5. **Release** — creates GitHub Release with changelog + wheel assets
 
-1. **Auto Tag** — `auto-tag.yml` reads the latest `vX.Y.Z` tag, increments the **patch** number, and pushes a new tag
-2. **Validate** — `release.yml` verifies the tag resolves correctly via `hatch-vcs`
-3. **Test** — runs full matrix across Python 3.10 / 3.11 / 3.12 × Linux / macOS / Windows
-4. **Build** — creates a universal `py3-none-any` sdist + wheel (pure Python, no per-OS builds)
-5. **Publish** — pushes to PyPI via OIDC trusted publisher (no API tokens needed)
-6. **Release** — creates a GitHub Release with auto-generated changelog and build assets
-7. **Verify** — installs the published package from PyPI on all three platforms
+Version is derived from git tags at build time via [`hatch-vcs`](https://github.com/ofek/hatch-vcs) — no hardcoded version strings anywhere.
 
 ### Major / Minor bumps
 
-Patch versions (`0.1.1` → `0.1.2`) are created automatically. For **minor** or **major** bumps, use the helper script:
+Patch versions are automatic. For **minor** or **major** bumps, push a tag manually:
 
 ```bash
 ./scripts/bump-version.sh 0.2.0    # creates + pushes v0.2.0 tag
 ./scripts/bump-version.sh 1.0.0    # creates + pushes v1.0.0 tag
 ```
 
-The pushed tag triggers `release.yml` — no source files need editing.
-
-### Pre-releases
-
-```bash
-./scripts/bump-version.sh 1.0.0-rc.1    # creates + pushes v1.0.0-rc.1 tag
-pip install -i https://test.pypi.org/simple/ auralith-data-pipeline==1.0.0rc1
-```
-
-### Release bot
-
-A **Release Drafter** bot automatically creates a draft GitHub Release every time a PR is merged to `main`. PRs are auto-labelled based on changed files, and the draft changelog is categorised into Features / Bug Fixes / Dependencies / etc. When the auto-tagger creates a version tag, the actual release replaces the draft.
+The pushed tag triggers the same release pipeline.
 
 ## License
 
