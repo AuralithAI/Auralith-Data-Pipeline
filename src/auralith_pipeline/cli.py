@@ -13,15 +13,38 @@ from auralith_pipeline.config.pipeline_config import PipelineConfig
 from auralith_pipeline.pipeline import Pipeline
 from auralith_pipeline.sources.data_sources import DATASET_REGISTRY, create_source
 from auralith_pipeline.storage.backends import create_storage_backend
+from auralith_pipeline.utils.file_types import (
+    AUDIO_EXTS as _AUDIO_EXTS,  # noqa: F401  (re-exported for tests)
+)
+from auralith_pipeline.utils.file_types import (
+    AUDIO_TOKEN_OFFSET as _AUDIO_TOKEN_OFFSET,
+)
+from auralith_pipeline.utils.file_types import (
+    IMAGE_EXTS as _IMAGE_EXTS,  # noqa: F401  (re-exported for tests)
+)
+from auralith_pipeline.utils.file_types import (
+    IMAGE_TOKEN_OFFSET as _IMAGE_TOKEN_OFFSET,
+)
+from auralith_pipeline.utils.file_types import (
+    MODALITY_ID as _MODALITY_ID,
+)
+from auralith_pipeline.utils.file_types import (
+    TEXT_EXTS as _TEXT_EXTS,  # noqa: F401  (re-exported for tests)
+)
+from auralith_pipeline.utils.file_types import (
+    VIDEO_EXTS as _VIDEO_EXTS,
+)
+from auralith_pipeline.utils.file_types import (
+    VIDEO_TOKEN_OFFSET as _VIDEO_TOKEN_OFFSET,
+)
+from auralith_pipeline.utils.file_types import (
+    classify_file as _classify_file,
+)
 from auralith_pipeline.utils.helpers import format_size, setup_logging
 
 logger = logging.getLogger(__name__)
 
 _NPY_GLOB = "*.npy"
-_VIDEO_EXTS = frozenset({".mp4", ".avi", ".mov", ".mkv", ".webm"})
-_TEXT_EXTS = frozenset({".txt", ".md", ".rst", ".csv", ".json", ".jsonl"})
-_IMAGE_EXTS = frozenset({".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".npy"})
-_AUDIO_EXTS = frozenset({".wav", ".flac", ".ogg", ".npy"})
 _CONFIG_JSON = "config.json"
 
 # ── ASCII banner ──────────────────────────────────────────────────────────
@@ -961,29 +984,6 @@ def _load_all_tokenizers(tokenizers_dir: Path) -> dict[str, Any]:
     return result
 
 
-def _classify_file(file_path: Path) -> str | None:
-    """Return the modality name for a file, or None if unsupported."""
-    ext = file_path.suffix.lower()
-    if ext in _TEXT_EXTS:
-        return "text"
-    if ext in _IMAGE_EXTS:
-        return "image"
-    if ext in _AUDIO_EXTS:
-        return "audio"
-    if ext in _VIDEO_EXTS:
-        return "video"
-    return None
-
-
-# Modality mask values — must match BPETokenizer.MODALITY_*
-_MODALITY_ID = {"text": 0, "image": 1, "audio": 2, "video": 3}
-
-# Token offsets to avoid ID collisions across modalities
-_IMAGE_TOKEN_OFFSET = 100_000
-_AUDIO_TOKEN_OFFSET = 200_000
-_VIDEO_TOKEN_OFFSET = 300_000
-
-
 def _tokenize_file(
     file_path: Path,
     tokenizers: dict[str, Any],
@@ -1184,10 +1184,15 @@ def coordinator(config: str, host: str, port: int):
 @click.option("--config", "-c", required=True, help="Configuration file path")
 @click.option("--coordinator", required=True, help="Coordinator address (host:port)")
 @click.option("--worker-id", required=True, help="Unique worker ID")
-def worker(config: str, coordinator: str, worker_id: str):
+@click.option(
+    "--state-store",
+    type=click.Choice(["redis", "memory"]),
+    default="redis",
+    help="State store backend (default: redis)",
+)
+def worker(config: str, coordinator: str, worker_id: str, state_store: str):
     """Start a worker node for distributed processing."""
-    from auralith_pipeline.distributed import Worker
-    from auralith_pipeline.distributed.state import RedisStateStore
+    from auralith_pipeline.distributed import DistributedConfig, Worker
 
     click.echo("=" * 60)
     click.echo("Starting Auralith Worker Node")
@@ -1195,18 +1200,32 @@ def worker(config: str, coordinator: str, worker_id: str):
 
     # Parse coordinator address
     host, port = coordinator.split(":")
+    dist_config = DistributedConfig.from_yaml(config)
 
     click.echo(f"\nWorker ID: {worker_id}")
     click.echo(f"Coordinator: {host}:{port}")
+    click.echo(f"State store: {state_store}")
 
     # Create worker
     w = Worker(worker_id, host, int(port))
 
-    # Connect to state store (use Redis by default)
-    state_store = RedisStateStore(host=host, port=6379)
+    # Connect to state store
+    if state_store == "memory":
+        from auralith_pipeline.distributed.state import InMemoryStateStore
+
+        store = InMemoryStateStore()
+    else:
+        from auralith_pipeline.distributed.state import RedisStateStore
+
+        store = RedisStateStore(
+            host=dist_config.coordinator.state_store_host,
+            port=dist_config.coordinator.state_store_port,
+            db=dist_config.coordinator.state_store_db,
+            password=dist_config.coordinator.state_store_password,
+        )
 
     try:
-        w.connect(state_store)
+        w.connect(store)
         w.start()
 
         click.echo("\n[OK] Worker started successfully")
@@ -1231,68 +1250,108 @@ def worker(config: str, coordinator: str, worker_id: str):
 
 @main.command("submit-job")
 @click.option("--config", "-c", required=True, help="Configuration file path")
-@click.option("--coordinator", required=True, help="Coordinator address (host:port)")
-@click.option("--job-name", required=True, help="Job name")
-@click.option("--dataset", "-d", required=True, help="Dataset to process")
-@click.option("--output-dir", "-o", required=True, help="Output directory")
-@click.option("--max-samples", "-n", type=int, help="Maximum samples")
+@click.option("--input-dir", "-i", required=True, help="Input directory of raw files")
+@click.option("--output-dir", "-o", required=True, help="Output directory for shards")
+@click.option("--tokenizers-dir", "-t", required=True, help="Tokenizers directory")
+@click.option("--job-name", default="auralith-job", help="Job name")
+@click.option("--max-seq-len", default=4096, type=int, help="Max sequence length")
+@click.option("--shard-size", default=10000, type=int, help="Samples per shard")
+@click.option("--files-per-task", default=500, type=int, help="Files per distributed task")
+@click.option("--num-workers", "-w", default=2, type=int, help="Workers (embedded mode)")
+@click.option(
+    "--embedded/--external",
+    default=False,
+    help="Run coordinator + workers in-process (no Redis needed)",
+)
 def submit_job(
     config: str,
-    coordinator: str,
-    job_name: str,
-    dataset: str,
+    input_dir: str,
     output_dir: str,
-    max_samples: int,
+    tokenizers_dir: str,
+    job_name: str,
+    max_seq_len: int,
+    shard_size: int,
+    files_per_task: int,
+    num_workers: int,
+    embedded: bool,
 ):
-    """Submit a distributed processing job."""
-    from auralith_pipeline.distributed import DistributedPipeline, JobConfig
-    from auralith_pipeline.sources.data_sources import create_source
+    """Submit a distributed processing job.
+
+    \b
+    Two modes:
+      --embedded   Spin up coordinator + N workers in-process (no Redis).
+      --external   Connect to an already-running coordinator via Redis.
+
+    \b
+    Embedded example (single machine, no Redis):
+        auralith-pipeline submit-job \\
+            -c configs/distributed.yaml \\
+            -i data/raw/ -o shards/ -t tokenizers/ \\
+            --embedded -w 4
+
+    \b
+    External example (coordinator + workers already running):
+        auralith-pipeline submit-job \\
+            -c configs/distributed.yaml \\
+            -i data/raw/ -o shards/ -t tokenizers/ \\
+            --external
+    """
+    from auralith_pipeline.distributed import DistributedConfig, DistributedPipeline, JobConfig
 
     click.echo("=" * 60)
     click.echo("Submitting Distributed Job")
     click.echo("=" * 60)
 
-    # Parse coordinator address
-    host, port = coordinator.split(":")
+    dist_config = DistributedConfig.from_yaml(config)
 
-    click.echo(f"\nJob Name: {job_name}")
-    click.echo(f"Dataset: {dataset}")
-    click.echo(f"Output: {output_dir}")
-    click.echo(f"Coordinator: {host}:{port}")
+    click.echo(f"\n  Job Name:       {job_name}")
+    click.echo(f"  Input:          {input_dir}")
+    click.echo(f"  Output:         {output_dir}")
+    click.echo(f"  Tokenizers:     {tokenizers_dir}")
+    click.echo(f"  Max seq len:    {max_seq_len}")
+    click.echo(f"  Shard size:     {shard_size}")
+    click.echo(f"  Files/task:     {files_per_task}")
+    click.echo(f"  Mode:           {'embedded' if embedded else 'external'}")
+    if embedded:
+        click.echo(f"  Workers:        {num_workers}")
 
-    # Create job config
     job_config = JobConfig(
         name=job_name,
-        coordinator_host=host,
-        coordinator_port=int(port),
+        coordinator_host=dist_config.coordinator.host,
+        coordinator_port=dist_config.coordinator.port,
+        num_workers=num_workers,
         output_dir=output_dir,
     )
 
-    # Load pipeline config
-    pipeline_config = PipelineConfig.from_yaml(config)
+    pipeline = DistributedPipeline(
+        job_config,
+        distributed_config=dist_config,
+        embedded=embedded,
+        num_workers=num_workers,
+    )
 
-    # Create distributed pipeline
-    pipeline = DistributedPipeline(job_config, pipeline_config=pipeline_config)
-
-    # Add source
-    source = create_source(dataset, streaming=True, max_samples=max_samples)
-    pipeline.add_source(source)
-
-    click.echo("\n[OK] Job configured")
-    click.echo("Starting job execution...")
+    click.echo("\n[OK] Job configured — starting execution...")
 
     try:
-        # Run the job
-        click.echo("\nStarting job execution...")
-        stats = pipeline.run(output_path=output_dir, monitor=True)
+        result = pipeline.run(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            tokenizers_dir=tokenizers_dir,
+            max_seq_len=max_seq_len,
+            shard_size=shard_size,
+            files_per_task=files_per_task,
+        )
 
         click.echo("\n" + "=" * 60)
-        click.echo("Job Completed Successfully")
+        click.echo("Job Completed")
         click.echo("=" * 60)
-        click.echo(f"\nSamples: {stats['total_samples']:,}")
-        click.echo(f"Shards: {stats.get('shard_count', 'N/A')}")
-        click.echo(f"Time: {stats.get('processing_time_seconds', 0):.1f}s")
-        click.echo(f"Output: {output_dir}")
+        click.echo(f"\n  Status:     {result.get('status', 'unknown')}")
+        click.echo(
+            f"  Tasks:      {result.get('completed_tasks', 0)}/{result.get('total_tasks', 0)}"
+        )
+        click.echo(f"  Failed:     {result.get('failed_tasks', 0)}")
+        click.echo(f"  Time:       {result.get('elapsed_seconds', 0):.1f}s")
+        click.echo(f"  Output:     {output_dir}")
 
     except Exception as e:
         click.echo(f"\n[ERROR] Job failed: {e}", err=True)

@@ -1,0 +1,331 @@
+# ──────────────────────────────────────────────────────────────────────
+#  Auralith Data Pipeline — Release & Publish
+#
+#  Trigger: push a version tag  →  v2.1.0, v3.0.0-rc.1, etc.
+#
+#  Pipeline:
+#    1. Validate tag matches pyproject.toml version
+#    2. Run full test matrix (3.10 / 3.11 / 3.12 × Linux / macOS / Windows)
+#    3. Build sdist + platform wheels
+#    4. Publish to PyPI via OIDC trusted publisher (no API tokens)
+#    5. Create GitHub Release with auto-generated changelog
+# ──────────────────────────────────────────────────────────────────────
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"        # stable:   v2.1.0
+      - "v[0-9]+.[0-9]+.[0-9]+-*"      # pre:      v2.1.0-rc.1, v2.1.0-beta.2
+
+permissions:
+  contents: write          # create GitHub release + upload assets
+  id-token: write          # OIDC token for PyPI trusted publisher
+  actions: read
+
+env:
+  PYTHON_DEFAULT: "3.12"
+
+# ── Cancel stale runs on the same tag ─────────────────────────────────
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ════════════════════════════════════════════════════════════════════
+  #  1. Validate — tag matches source version
+  # ════════════════════════════════════════════════════════════════════
+  validate:
+    name: Validate version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      is_prerelease: ${{ steps.meta.outputs.is_prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version metadata
+        id: meta
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          echo "version=${TAG}" >> "$GITHUB_OUTPUT"
+
+          # Check if pre-release (contains hyphen: v2.1.0-rc.1)
+          if [[ "$TAG" == *-* ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "📦 Tag version: ${TAG}"
+
+      - name: Verify tag matches pyproject.toml
+        run: |
+          TAG_VER="${GITHUB_REF#refs/tags/v}"
+          # Strip pre-release suffix for comparison (v2.1.0-rc.1 → 2.1.0)
+          TAG_BASE="${TAG_VER%%-*}"
+          TOML_VER=$(python3 -c "
+          import re
+          with open('pyproject.toml') as f:
+              m = re.search(r'version\s*=\s*\"([^\"]+)\"', f.read())
+              print(m.group(1) if m else '')
+          ")
+          echo "Tag base:      ${TAG_BASE}"
+          echo "pyproject.toml: ${TOML_VER}"
+          if [ "$TAG_BASE" != "$TOML_VER" ]; then
+            echo "::error::Version mismatch! Tag=${TAG_BASE} vs pyproject.toml=${TOML_VER}"
+            exit 1
+          fi
+
+      - name: Verify tag matches __init__.py
+        run: |
+          TAG_VER="${GITHUB_REF#refs/tags/v}"
+          TAG_BASE="${TAG_VER%%-*}"
+          INIT_VER=$(python3 -c "
+          import re
+          with open('src/auralith_pipeline/__init__.py') as f:
+              m = re.search(r'__version__\s*=\s*\"([^\"]+)\"', f.read())
+              print(m.group(1) if m else '')
+          ")
+          echo "Tag base:      ${TAG_BASE}"
+          echo "__init__.py:   ${INIT_VER}"
+          if [ "$TAG_BASE" != "$INIT_VER" ]; then
+            echo "::error::Version mismatch! Tag=${TAG_BASE} vs __init__.py=${INIT_VER}"
+            exit 1
+          fi
+
+  # ════════════════════════════════════════════════════════════════════
+  #  2. Test — full matrix across OS + Python versions
+  # ════════════════════════════════════════════════════════════════════
+  test:
+    name: Test (Py${{ matrix.python-version }} / ${{ matrix.os }})
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint
+        run: |
+          black --check src/ tests/
+          ruff check src/ tests/
+
+      - name: Test
+        run: pytest tests/ -v --tb=short
+
+  # ════════════════════════════════════════════════════════════════════
+  #  3. Build — sdist + wheels per platform
+  # ════════════════════════════════════════════════════════════════════
+  build:
+    name: Build (${{ matrix.os }})
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history for git-based versioning
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_DEFAULT }}
+
+      - name: Install build tools
+        run: pip install build twine
+
+      - name: Build package
+        run: python -m build
+
+      - name: Verify package
+        run: twine check dist/*
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}
+          path: dist/*
+          retention-days: 5
+
+  # ════════════════════════════════════════════════════════════════════
+  #  4. Publish to PyPI — OIDC trusted publisher (no API token needed)
+  # ════════════════════════════════════════════════════════════════════
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    environment:
+      name: release
+      url: https://pypi.org/project/auralith-data-pipeline/
+    permissions:
+      id-token: write    # OIDC for PyPI trusted publisher
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist/
+          merge-multiple: true
+
+      - name: List distribution files
+        run: ls -la dist/
+
+      # Publish to TestPyPI for pre-releases, PyPI for stable
+      - name: Publish to TestPyPI (pre-release)
+        if: needs.validate.outputs.is_prerelease == 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+
+      - name: Publish to PyPI (stable)
+        if: needs.validate.outputs.is_prerelease == 'false'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+
+  # ════════════════════════════════════════════════════════════════════
+  #  5. GitHub Release — changelog + assets
+  # ════════════════════════════════════════════════════════════════════
+  github-release:
+    name: GitHub Release
+    needs: [validate, build, publish-pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist/
+          merge-multiple: true
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get the previous tag
+          PREV_TAG=$(git tag --sort=-v:refname | head -2 | tail -1)
+          CURRENT_TAG="${GITHUB_REF#refs/tags/}"
+
+          echo "Previous tag: ${PREV_TAG:-'(none)'}"
+          echo "Current tag:  ${CURRENT_TAG}"
+
+          {
+            echo "## What's Changed"
+            echo ""
+
+            if [ -n "$PREV_TAG" ]; then
+              # Categorise commits
+              echo "### 🚀 Features"
+              git log "${PREV_TAG}..${CURRENT_TAG}" --pretty=format:"- %s (%h)" --grep="^feat" --no-merges 2>/dev/null || true
+              echo ""
+              echo ""
+
+              echo "### 🐛 Bug Fixes"
+              git log "${PREV_TAG}..${CURRENT_TAG}" --pretty=format:"- %s (%h)" --grep="^fix" --no-merges 2>/dev/null || true
+              echo ""
+              echo ""
+
+              echo "### 📦 Dependencies"
+              git log "${PREV_TAG}..${CURRENT_TAG}" --pretty=format:"- %s (%h)" --grep="^deps\|^chore(deps)" --no-merges 2>/dev/null || true
+              echo ""
+              echo ""
+
+              echo "### 🔧 Other Changes"
+              git log "${PREV_TAG}..${CURRENT_TAG}" --pretty=format:"- %s (%h)" --no-merges 2>/dev/null | head -20 || true
+              echo ""
+            else
+              echo "Initial release 🎉"
+              echo ""
+            fi
+
+            echo ""
+            echo "---"
+            echo ""
+            echo "### 📥 Installation"
+            echo ""
+            echo '```bash'
+            echo "pip install auralith-data-pipeline==${{ needs.validate.outputs.version }}"
+            echo '```'
+            echo ""
+            echo "Or with all extras:"
+            echo ""
+            echo '```bash'
+            echo 'pip install "auralith-data-pipeline[all]==${{ needs.validate.outputs.version }}"'
+            echo '```'
+            echo ""
+            echo "### 🔧 Quick Start"
+            echo ""
+            echo '```bash'
+            echo "auralith-pipeline --help"
+            echo '```'
+            echo ""
+            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG:-HEAD}...${CURRENT_TAG}"
+          } > /tmp/changelog.md
+
+          cat /tmp/changelog.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "Auralith Data Pipeline ${{ github.ref_name }}"
+          body_path: /tmp/changelog.md
+          draft: false
+          prerelease: ${{ needs.validate.outputs.is_prerelease == 'true' }}
+          files: dist/*
+          generate_release_notes: true
+          make_latest: ${{ needs.validate.outputs.is_prerelease == 'false' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ════════════════════════════════════════════════════════════════════
+  #  6. Post-release — verify the published package is installable
+  # ════════════════════════════════════════════════════════════════════
+  verify:
+    name: Verify (${{ matrix.os }})
+    needs: [validate, publish-pypi]
+    if: needs.validate.outputs.is_prerelease == 'false'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_DEFAULT }}
+
+      - name: Wait for PyPI propagation
+        run: sleep 60
+
+      - name: Install from PyPI
+        run: pip install "auralith-data-pipeline==${{ needs.validate.outputs.version }}"
+
+      - name: Verify import
+        run: python -c "from auralith_pipeline import __version__; print(f'✅ v{__version__}')"
+
+      - name: Verify CLI
+        run: auralith-pipeline --help

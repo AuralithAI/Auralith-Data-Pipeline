@@ -1,0 +1,95 @@
+# ──────────────────────────────────────────────────────────────────────
+#  Release Drafter — auto-generate release notes from PR labels
+#  https://github.com/release-drafter/release-drafter
+# ──────────────────────────────────────────────────────────────────────
+name-template: "v$RESOLVED_VERSION"
+tag-template: "v$RESOLVED_VERSION"
+
+categories:
+  - title: "🚀 Features"
+    labels:
+      - "feature"
+      - "enhancement"
+  - title: "🐛 Bug Fixes"
+    labels:
+      - "bug"
+      - "fix"
+      - "bugfix"
+  - title: "📦 Dependencies"
+    labels:
+      - "dependencies"
+      - "deps"
+  - title: "📝 Documentation"
+    labels:
+      - "documentation"
+      - "docs"
+  - title: "🔧 Maintenance"
+    labels:
+      - "chore"
+      - "maintenance"
+      - "refactor"
+  - title: "⚡ Performance"
+    labels:
+      - "performance"
+      - "optimization"
+  - title: "🔒 Security"
+    labels:
+      - "security"
+  - title: "💥 Breaking Changes"
+    labels:
+      - "breaking"
+      - "breaking-change"
+
+change-template: "- $TITLE (#$NUMBER) @$AUTHOR"
+change-title-escapes: '\<*_&'
+
+exclude-labels:
+  - "skip-changelog"
+  - "ci"
+
+version-resolver:
+  major:
+    labels:
+      - "breaking"
+      - "breaking-change"
+  minor:
+    labels:
+      - "feature"
+      - "enhancement"
+  patch:
+    labels:
+      - "bug"
+      - "fix"
+      - "bugfix"
+      - "chore"
+      - "dependencies"
+  default: patch
+
+template: |
+  ## What's Changed
+
+  $CHANGES
+
+  ---
+
+  ### 📥 Installation
+
+  ```bash
+  pip install auralith-data-pipeline==$RESOLVED_VERSION
+  ```
+
+  Or with all extras:
+
+  ```bash
+  pip install "auralith-data-pipeline[all]==$RESOLVED_VERSION"
+  ```
+
+  ### 🔧 Quick Start
+
+  ```bash
+  auralith-pipeline --help
+  ```
+
+  **Full Changelog**: https://github.com/$OWNER/$REPOSITORY/compare/$PREVIOUS_TAG...v$RESOLVED_VERSION
+
+  **Contributors**: $CONTRIBUTORS

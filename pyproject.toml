@@ -90,6 +90,7 @@ tracking = [
 # Distributed processing
 distributed = [
     "ray[default]>=2.9.0",
+    "psutil>=5.9.0",
 ]
 # Development tools
 dev = [
@@ -113,6 +114,7 @@ Homepage = "https://github.com/AuralithAI/Auralith-Data-Pipeline"
 Documentation = "https://github.com/AuralithAI/Auralith-Data-Pipeline#readme"
 Repository = "https://github.com/AuralithAI/Auralith-Data-Pipeline"
 Issues = "https://github.com/AuralithAI/Auralith-Data-Pipeline/issues"
+Changelog = "https://github.com/AuralithAI/Auralith-Data-Pipeline/releases"
 
 [tool.hatch.build.targets.sdist]
 include = [

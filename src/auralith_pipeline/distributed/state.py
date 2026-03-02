@@ -57,6 +57,21 @@ class StateStore(ABC):
         """Get the length of a queue."""
         pass
 
+    @abstractmethod
+    def get_all_workers(self) -> list[str]:
+        """Return IDs of all workers with active heartbeats."""
+        pass
+
+    @abstractmethod
+    def check_heartbeat(self, worker_id: str) -> bool:
+        """Return True if the worker's heartbeat key is alive."""
+        pass
+
+    @abstractmethod
+    def set_heartbeat(self, worker_id: str, ttl: int = 30) -> None:
+        """Set worker heartbeat with TTL."""
+        pass
+
 
 class RedisStateStore(StateStore):
     """Redis-based state storage implementation."""
@@ -234,3 +249,21 @@ class InMemoryStateStore(StateStore):
     def queue_length(self, queue_name: str) -> int:
         """Get the length of an in-memory queue."""
         return len(self.queues.get(queue_name, []))
+
+    def set_heartbeat(self, worker_id: str, ttl: int = 30):
+        """Set worker heartbeat (TTL ignored in memory store)."""
+        key = f"heartbeat:{worker_id}"
+        self.data[key] = {
+            "timestamp": datetime.now().isoformat(),
+            "status": "alive",
+        }
+
+    def check_heartbeat(self, worker_id: str) -> bool:
+        """Check if worker heartbeat is alive."""
+        key = f"heartbeat:{worker_id}"
+        return key in self.data
+
+    def get_all_workers(self) -> list[str]:
+        """Get all active worker IDs."""
+        prefix = "heartbeat:"
+        return [key[len(prefix) :] for key in self.data if key.startswith(prefix)]

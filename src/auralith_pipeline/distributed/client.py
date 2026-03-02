@@ -49,7 +49,7 @@ class DistributedClient:
     def get_metrics(self, job_id: str) -> dict[str, Any]:
         """Get job metrics."""
         job = self.get_job(job_id)
-        total_tasks = len(job.get("tasks", []))
+        total_tasks = job.get("total_tasks", 0)
         completed = job.get("completed_tasks", 0)
         failed = job.get("failed_tasks", 0)
 

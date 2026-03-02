@@ -1,4 +1,8 @@
-.PHONY: install dev test lint format clean build docs
+.PHONY: setup install dev test lint format clean build docs release bump
+
+# One-shot setup (venv + all dependencies)
+setup:
+	chmod +x setup.sh && ./setup.sh
 
 # Install package
 install:
@@ -44,7 +48,18 @@ find . -type d -name __pycache__ -exec rm -rf {} +
 
 # Build package
 build: clean
-python -m build
+	python -m build
+	twine check dist/*
+
+# Bump version and release (usage: make release V=2.1.0)
+release:
+	@test -n "$(V)" || (echo "Usage: make release V=2.1.0" && exit 1)
+	chmod +x scripts/bump-version.sh && ./scripts/bump-version.sh $(V) --push
+
+# Bump version without pushing (usage: make bump V=2.1.0)
+bump:
+	@test -n "$(V)" || (echo "Usage: make bump V=2.1.0" && exit 1)
+	chmod +x scripts/bump-version.sh && ./scripts/bump-version.sh $(V)
 
 # Collect Wikipedia sample
 collect-sample:

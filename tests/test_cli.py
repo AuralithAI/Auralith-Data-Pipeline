@@ -778,9 +778,23 @@ class TestClassifyFile:
         assert _classify_file(tmp_path / "file.xyz") is None
         assert _classify_file(tmp_path / "file.pdf") is None
 
-    def test_npy_is_image(self, tmp_path):
-        # .npy can be image or audio; _classify_file checks _IMAGE_EXTS first
-        assert _classify_file(tmp_path / "data.npy") == "image"
+    def test_npy_in_image_dir(self, tmp_path):
+        # .npy under an "images" directory → "image"
+        img_dir = tmp_path / "images"
+        img_dir.mkdir()
+        assert _classify_file(img_dir / "data.npy") == "image"
+
+    def test_npy_in_audio_dir(self, tmp_path):
+        # .npy under an "audio" directory → "audio"
+        aud_dir = tmp_path / "audio"
+        aud_dir.mkdir()
+        assert _classify_file(aud_dir / "data.npy") == "audio"
+
+    def test_npy_ambiguous_dir(self, tmp_path):
+        # .npy in a directory with no image/audio keyword → None
+        misc_dir = tmp_path / "misc"
+        misc_dir.mkdir()
+        assert _classify_file(misc_dir / "data.npy") is None
 
 
 # ---------------------------------------------------------------------------
@@ -794,14 +808,22 @@ class TestExtensionConstants:
     def test_text_exts(self):
         assert ".txt" in _TEXT_EXTS
         assert ".md" in _TEXT_EXTS
+        assert ".rst" in _TEXT_EXTS
+        assert ".py" in _TEXT_EXTS
 
     def test_image_exts(self):
         assert ".jpg" in _IMAGE_EXTS
         assert ".png" in _IMAGE_EXTS
+        assert ".webp" in _IMAGE_EXTS
+        # .npy is no longer in _IMAGE_EXTS — handled by directory routing
+        assert ".npy" not in _IMAGE_EXTS
 
     def test_audio_exts(self):
         assert ".wav" in _AUDIO_EXTS
         assert ".flac" in _AUDIO_EXTS
+        assert ".mp3" in _AUDIO_EXTS
+        # .npy is no longer in _AUDIO_EXTS — handled by directory routing
+        assert ".npy" not in _AUDIO_EXTS
 
     def test_modality_ids(self):
         assert _MODALITY_ID == {"text": 0, "image": 1, "audio": 2, "video": 3}

@@ -1,103 +1,71 @@
 # Distributed processing configuration
-# Use this config to run distributed data processing across multiple machines
+# ====================================================================
+#
+# Two modes:
+#   1. EXTERNAL — start coordinator + workers separately (across machines).
+#      Requires Redis for shared state.
+#   2. EMBEDDED — single-machine, in-process coordinator + N workers.
+#      Uses "memory" state store (no Redis dependency).
+#
+# External multi-machine example:
+#   Terminal 1: auralith-pipeline coordinator -c configs/distributed.yaml
+#   Terminal 2: auralith-pipeline worker -c configs/distributed.yaml \
+#                 --coordinator coordinator.internal:8080 --worker-id worker-1
+#   Terminal 3: auralith-pipeline submit-job -c configs/distributed.yaml \
+#                 -i data/raw/ -o shards/ -t tokenizers/ --external
+#
+# Embedded single-machine example:
+#   auralith-pipeline submit-job -c configs/distributed.yaml \
+#       -i data/raw/ -o shards/ -t tokenizers/ --embedded -w 4
+# ====================================================================
 
 coordinator:
-  # Coordinator node settings
-  host: coordinator.internal
+  host: "0.0.0.0"
   port: 8080
-  
-  # State store (Redis) configuration
+
+  # State store — "redis" for multi-machine, "memory" for embedded/dev
   state_store_type: redis
   state_store_host: redis.internal
   state_store_port: 6379
   state_store_db: 0
-  
+  # state_store_password: null    # Uncomment for cloud Redis (ElastiCache, etc.)
+
   # Worker monitoring
-  heartbeat_interval: 10  # seconds
-  heartbeat_timeout: 30   # seconds
-  
+  heartbeat_interval: 10   # seconds
+  heartbeat_timeout: 30    # seconds
+
   # Task retry settings
   max_retries: 3
-  retry_backoff: 5        # seconds
-  task_timeout: 3600      # 1 hour
-  
+  retry_backoff: 5         # seconds
+  task_timeout: 3600       # 1 hour
+
   # Checkpointing
   enable_checkpointing: true
-  checkpoint_interval: 300     # 5 minutes
-  checkpoint_dir: s3://auralith-datasets/checkpoints/
+  checkpoint_interval: 300
+  checkpoint_dir: ./checkpoints
   keep_last_n_checkpoints: 5
 
 workers:
-  # Collection workers
-  - name: collection
+  - name: processing
     worker_ids:
       - worker-1
       - worker-2
-    batch_size: 1000
-    num_processes: 4
-    cpu_cores: 4
-    memory_gb: 16
-    
-  # Processing workers  
-  - name: processing
-    worker_ids:
       - worker-3
       - worker-4
     batch_size: 500
     num_processes: 4
     cpu_cores: 4
     memory_gb: 16
-    
-  # Tokenization workers
-  - name: tokenization
-    worker_ids:
-      - worker-5
-      - worker-6
-    batch_size: 100
-    num_processes: 4
-    cpu_cores: 8
-    memory_gb: 32
 
 job:
   name: distributed-processing
-  num_workers: 6
-  timeout: 86400  # 24 hours
-  
+  num_workers: 4
+  timeout: 86400   # 24 hours
+
   # Monitoring
   enable_monitoring: true
   monitoring_port: 9090
-  
+
   # Output
-  output_dir: s3://auralith-datasets/shards/
+  output_dir: ./shards
   checkpoint_enabled: true
-
-# Pipeline configuration (same as production.yaml)
-pipeline:
-  output_dir: ./data/shards
-  
-sources:
-  - type: huggingface
-    path: wikipedia
-    max_samples: 10000000
-    distributed: true  # Enable distributed processing
-    
-preprocessing:
-  deduplicate: true
-  quality_filter: true
-  remove_pii: true
-  
-tokenization:
-  tokenizer_path: gpt2
-  max_length: 2048
-  
-sharding:
-  format: safetensors
-  max_size_mb: 1000
-  compression: zstd
-
-storage:
-  backend: s3
-  s3:
-    bucket: auralith-datasets
-    region: us-west-2
-    prefix: distributed/

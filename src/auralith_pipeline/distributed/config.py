@@ -11,10 +11,11 @@ class CoordinatorConfig:
     port: int = 8080
 
     # State store configuration
-    state_store_type: str = "redis"  # or "etcd"
+    state_store_type: str = "redis"  # "redis" or "memory"
     state_store_host: str = "localhost"
     state_store_port: int = 6379
     state_store_db: int = 0
+    state_store_password: str | None = None  # For cloud Redis (ElastiCache, etc.)
 
     # Heartbeat settings
     heartbeat_interval: int = 10  # seconds
@@ -56,7 +57,7 @@ class WorkerPoolConfig:
 class JobConfig:
     """Configuration for distributed job."""
 
-    name: str
+    name: str = "auralith-job"
     coordinator_host: str = "localhost"
     coordinator_port: int = 8080
 
