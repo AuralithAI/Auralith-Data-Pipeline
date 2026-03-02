@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "auralith-data-pipeline"
 dynamic = ["version"]
 description = "Production-grade data collection and processing pipeline for training LLMs and multimodal AI"
-readme = "README.md"
+readme = "README.pypi.md"
 license = "Apache-2.0"
 authors = [
     { name = "AuralithAI", email = "contact@auralith.ai" }
@@ -130,6 +130,7 @@ include = [
     "/src",
     "/configs",
     "/scripts",
+    "/README.pypi.md",
 ]
 
 [tool.hatch.build.targets.wheel]
