@@ -1,5 +1,13 @@
 # ──────────────────────────────────────────────────────────────────────
 #  Auralith Data Pipeline — Automatic Version Tagging
+#
+#  ⚠️  Uses RELEASE_TOKEN (a PAT or GitHub App token) so the pushed
+#      tag triggers release.yml. The default GITHUB_TOKEN does NOT
+#      trigger downstream workflows — this is a GitHub limitation.
+#
+#  Setup:
+#    1. Create a fine-grained PAT with "Contents: Read and write" scope
+#    2. Add it as a repo secret named RELEASE_TOKEN
 # ──────────────────────────────────────────────────────────────────────
 name: Auto Tag
 
@@ -22,7 +30,7 @@ jobs:
         with:
           fetch-depth: 0          
           fetch-tags: true
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Compute next version
         id: version
