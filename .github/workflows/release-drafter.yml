@@ -12,8 +12,8 @@ name: Release Drafter
 
 on:
   push:
-    branches: [main]
-  pull_request:
+    branches: [main, production-grade]
+  pull_request_target:
     types: [opened, reopened, synchronize]
 
 permissions:
@@ -30,5 +30,6 @@ jobs:
       - uses: release-drafter/release-drafter@v6
         with:
           config-name: release-drafter.yml
+          commitish: production-grade
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
