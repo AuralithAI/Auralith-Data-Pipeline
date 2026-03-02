@@ -830,40 +830,44 @@ export WANDB_API_KEY=xxxxx
 
 ## Releasing
 
-Releases are fully automated via GitHub Actions. When a version tag is pushed, the pipeline:
+Releases are **fully automated** — no manual tagging required. Just merge a PR to `main` and the pipeline handles everything:
 
-1. **Validates** the tag matches `pyproject.toml` and `__init__.py`
-2. **Tests** across Python 3.10 / 3.11 / 3.12 × Linux / macOS / Windows
-3. **Builds** sdist + wheels per platform
-4. **Publishes** to PyPI via OIDC trusted publisher (no API tokens needed)
-5. **Creates** a GitHub Release with auto-generated changelog and build assets
-6. **Verifies** the published package is installable on all three platforms
+1. **Auto Tag** — `auto-tag.yml` detects the version in `pyproject.toml`, creates a git tag `vX.Y.Z`, and pushes it
+2. **Validate** — `release.yml` verifies the tag matches `pyproject.toml` and `__init__.py`
+3. **Test** — runs full matrix across Python 3.10 / 3.11 / 3.12 × Linux / macOS / Windows
+4. **Build** — creates sdist + wheels per platform
+5. **Publish** — pushes to PyPI via OIDC trusted publisher (no API tokens needed)
+6. **Release** — creates a GitHub Release with auto-generated changelog and build assets
+7. **Verify** — installs the published package from PyPI on all three platforms
 
-### Cutting a release
+### Bumping the version
+
+When your PR includes a version bump, the release happens automatically on merge:
 
 ```bash
-# Option A: Use the bump script (recommended)
-chmod +x scripts/bump-version.sh
-./scripts/bump-version.sh 2.1.0 --push   # bumps files, commits, tags, pushes
+# In your feature branch, bump the version:
+./scripts/bump-version.sh 0.2.0     # updates pyproject.toml + __init__.py
 
-# Option B: Manual steps
-# 1. Update version in pyproject.toml and src/auralith_pipeline/__init__.py
-# 2. Commit and tag:
-git commit -am "release: v2.1.0"
-git tag -a v2.1.0 -m "Release v2.1.0"
-git push origin HEAD && git push origin v2.1.0
+# Commit and push (as part of your PR)
+git add pyproject.toml src/auralith_pipeline/__init__.py
+git commit -m "release: v0.2.0"
+git push
+
+# Merge the PR → auto-tag creates v0.2.0 → release pipeline runs
 ```
+
+> **Tip:** Not every PR needs a version bump. Only include a version change when you're ready to cut a release. PRs without version changes are accumulated by the Release Drafter bot.
 
 ### Pre-releases
 
 ```bash
-./scripts/bump-version.sh 2.1.0-rc.1 --push   # publishes to TestPyPI
-pip install -i https://test.pypi.org/simple/ auralith-data-pipeline==2.1.0rc1
+./scripts/bump-version.sh 1.0.0-rc.1 --push   # publishes to TestPyPI
+pip install -i https://test.pypi.org/simple/ auralith-data-pipeline==1.0.0rc1
 ```
 
 ### Release bot
 
-A **Release Drafter** bot automatically creates a draft GitHub Release every time a PR is merged to `main`. PRs are auto-labelled based on changed files, and the draft changelog is categorised into Features / Bug Fixes / Dependencies / etc. When you push a version tag, the actual release replaces the draft.
+A **Release Drafter** bot automatically creates a draft GitHub Release every time a PR is merged to `main`. PRs are auto-labelled based on changed files, and the draft changelog is categorised into Features / Bug Fixes / Dependencies / etc. When the auto-tagger creates a version tag, the actual release replaces the draft.
 
 ## License
 

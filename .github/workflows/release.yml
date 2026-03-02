@@ -1,7 +1,8 @@
 # ──────────────────────────────────────────────────────────────────────
 #  Auralith Data Pipeline — Release & Publish
 #
-#  Trigger: push a version tag  →  v2.1.0, v3.0.0-rc.1, etc.
+#  Trigger: push a version tag  →  v0.1.0, v1.0.0-rc.1, etc.
+#           (tags are created automatically by auto-tag.yml on PR merge)
 #
 #  Pipeline:
 #    1. Validate tag matches pyproject.toml version

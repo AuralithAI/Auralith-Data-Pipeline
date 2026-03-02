@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────────────────
-#  Auralith Data Pipeline — Version Bump & Tag
+#  Auralith Data Pipeline — Version Bump
 #
 #  Usage:
-#    ./scripts/bump-version.sh 2.1.0          # bump to 2.1.0
-#    ./scripts/bump-version.sh 2.1.0 --push   # bump, commit, tag, push
-#    ./scripts/bump-version.sh 2.1.0-rc.1     # pre-release tag
+#    ./scripts/bump-version.sh 0.2.0          # bump files only (for PR)
+#    ./scripts/bump-version.sh 0.2.0 --push   # bump, commit, tag, push
+#    ./scripts/bump-version.sh 1.0.0-rc.1     # pre-release tag
+#
+#  Recommended flow (fully automated):
+#    1. Run: ./scripts/bump-version.sh 0.2.0
+#    2. Commit the changes in your PR
+#    3. Merge PR → auto-tag.yml creates the tag → release.yml publishes
 # ──────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
