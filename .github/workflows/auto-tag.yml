@@ -1,0 +1,98 @@
+# ──────────────────────────────────────────────────────────────────────
+#  Auralith Data Pipeline — Automatic Version Tagging
+#
+#  On every PR merge to main:
+#    1. Read the version from pyproject.toml
+#    2. Check if a git tag already exists for that version
+#    3. If not → create tag vX.Y.Z and push it
+#    4. The pushed tag triggers the release.yml pipeline automatically
+#
+#  Bump flow (zero manual steps after merge):
+#    PR includes version bump in pyproject.toml + __init__.py
+#    → PR merges to main
+#    → this workflow creates the tag
+#    → release.yml builds, tests, publishes to PyPI, creates GitHub Release
+#
+#  To bump version in a PR, either:
+#    • Edit pyproject.toml + __init__.py manually, or
+#    • Use: ./scripts/bump-version.sh 0.2.0  (without --push)
+# ──────────────────────────────────────────────────────────────────────
+name: Auto Tag
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "pyproject.toml"
+
+permissions:
+  contents: write
+
+jobs:
+  auto-tag:
+    name: Create version tag
+    runs-on: ubuntu-latest
+    # Only run on merge commits (not direct pushes by bots to avoid loops)
+    if: >-
+      github.event.head_commit.author.username != 'github-actions[bot]'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # need full history to check existing tags
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version from pyproject.toml
+        id: version
+        run: |
+          VERSION=$(python3 -c "
+          import re
+          with open('pyproject.toml') as f:
+              m = re.search(r'version\s*=\s*\"([^\"]+)\"', f.read())
+              print(m.group(1) if m else '')
+          ")
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "📦 Detected version: ${VERSION} (tag: v${VERSION})"
+
+      - name: Check if tag already exists
+        id: check
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          if git rev-parse "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "⏭️  Tag ${TAG} already exists — skipping"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "🆕 Tag ${TAG} does not exist — will create"
+          fi
+
+      - name: Verify __init__.py matches
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          EXPECTED="${{ steps.version.outputs.version }}"
+          INIT_VER=$(python3 -c "
+          import re
+          with open('src/auralith_pipeline/__init__.py') as f:
+              m = re.search(r'__version__\s*=\s*\"([^\"]+)\"', f.read())
+              print(m.group(1) if m else '')
+          ")
+          echo "pyproject.toml: ${EXPECTED}"
+          echo "__init__.py:    ${INIT_VER}"
+          if [ "$EXPECTED" != "$INIT_VER" ]; then
+            echo "::error::Version mismatch! pyproject.toml=${EXPECTED} vs __init__.py=${INIT_VER}"
+            echo "::error::Update both files to the same version before merging."
+            exit 1
+          fi
+
+      - name: Create and push tag
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push origin "${TAG}"
+          echo "✅ Created and pushed tag ${TAG}"
+          echo ""
+          echo "🚀 The release pipeline will now run automatically."
