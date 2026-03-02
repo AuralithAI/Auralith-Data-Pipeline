@@ -381,10 +381,12 @@ case "$MODE" in
         python -m pip install -e ".[dev]" --quiet
         ok "Dev installation complete"
         # Set up pre-commit hooks if available
-        if command -v pre-commit &>/dev/null; then
+        if [ -d ".git" ] && command -v pre-commit &>/dev/null; then
             info "Installing pre-commit hooks ..."
             pre-commit install
             ok "Pre-commit hooks installed"
+        elif ! [ -d ".git" ]; then
+            info "Skipping pre-commit hooks (not a git repository)"
         fi
         ;;
     all)
@@ -392,10 +394,12 @@ case "$MODE" in
         python -m pip install -e ".[all]" --quiet
         ok "Full installation complete"
         # Set up pre-commit hooks
-        if command -v pre-commit &>/dev/null; then
+        if [ -d ".git" ] && command -v pre-commit &>/dev/null; then
             info "Installing pre-commit hooks ..."
             pre-commit install
             ok "Pre-commit hooks installed"
+        elif ! [ -d ".git" ]; then
+            info "Skipping pre-commit hooks (not a git repository)"
         fi
         ;;
 esac
