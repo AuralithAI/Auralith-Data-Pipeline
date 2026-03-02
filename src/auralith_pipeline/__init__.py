@@ -14,7 +14,7 @@ Usage:
 
 try:
     from auralith_pipeline._version import __version__
-except ImportError:  # editable install / dev checkout without build
+except ImportError:
     try:
         from importlib.metadata import version
 
