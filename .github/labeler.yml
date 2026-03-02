@@ -1,0 +1,55 @@
+# ──────────────────────────────────────────────────────────────────────
+#  PR Labeler — auto-label PRs based on file paths
+#  Used by release-drafter to categorise changelog entries
+# ──────────────────────────────────────────────────────────────────────
+
+# Features
+feature:
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/auralith_pipeline/**
+          - "!src/auralith_pipeline/__init__.py"
+
+# Bug fixes
+bug:
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/auralith_pipeline/**
+    head-branch: ['^fix/', '^bugfix/', '^hotfix/']
+
+# Dependencies
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - pyproject.toml
+          - requirements/**
+
+# Documentation
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - docs/**
+          - "*.md"
+          - LICENSE
+
+# CI / Infrastructure
+ci:
+  - changed-files:
+      - any-glob-to-any-file:
+          - .github/**
+          - Dockerfile
+          - docker/**
+          - Makefile
+
+# Tests
+tests:
+  - changed-files:
+      - any-glob-to-any-file:
+          - tests/**
+
+# Security
+security:
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/auralith_pipeline/security/**
+    head-branch: ['^security/']

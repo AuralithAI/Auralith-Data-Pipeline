@@ -78,6 +78,9 @@ Production-grade multimodal data processing pipeline for training [RT-DLM](https
 | **Orchestration** | Argo Workflows DAG orchestration | ✅ |
 | **Orchestration** | Helm chart for K8s deployment | ✅ |
 | **Orchestration** | Ray distributed pipeline runner | ✅ |
+| **Orchestration** | Distributed coordinator + workers (Redis or in-memory) | ✅ |
+| **Orchestration** | Embedded single-machine mode (no Redis) | ✅ |
+| **Orchestration** | Worker failure detection + automatic task requeue | ✅ |
 | **Compliance** | License detection (permissive/copyleft) | ✅ |
 | **Compliance** | Full audit logging (JSONL) | ✅ |
 | **Compliance** | E2E schema validation tests | ✅ |
@@ -88,13 +91,79 @@ Production-grade multimodal data processing pipeline for training [RT-DLM](https
 
 ## Installation
 
+### Install from PyPI (no clone needed)
+
+```bash
+# Core text pipeline
+pip install auralith-data-pipeline
+
+# With all extras (multimodal, cloud, distributed, dev tools — ~3 GB)
+pip install "auralith-data-pipeline[all]"
+
+# Pick only what you need
+pip install "auralith-data-pipeline[quality]"        # + perplexity filter + FAISS dedup
+pip install "auralith-data-pipeline[distributed]"    # + Ray
+pip install "auralith-data-pipeline[cloud,pdf]"      # + S3/GCS/Azure + PDF extraction
+```
+
+Once installed, the CLI is available globally:
+
+```bash
+auralith-pipeline --help
+auralith-pipeline list-datasets
+auralith-pipeline process --input data/ --output shards/
+```
+
+### Developer setup (clone + editable install)
+
+#### One-command setup (recommended)
+
 ```bash
 git clone https://github.com/AuralithAI/Auralith-Data-Pipeline.git
 cd Auralith-Data-Pipeline
 
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# or .\venv\Scripts\activate  # Windows
+chmod +x setup.sh
+./setup.sh            # Creates .venv + installs ALL extras (~3 GB with PyTorch)
+```
+
+The setup script automatically:
+- **Detects your OS** (macOS, Linux/WSL, Windows via Git Bash)
+- **Checks for Python 3.10+** — if missing, offers to install it via your system package manager (`brew`, `apt`, `dnf`, `pacman`, `winget`, etc.)
+- **Installs system build dependencies** (`libffi`, `openssl`, `gcc`, etc.) needed for native extensions
+- **Creates a `.venv` virtual environment** and activates it
+- **Bootstraps pip** (via `ensurepip`) if not available, then upgrades pip + setuptools + wheel
+- **Installs the package** in editable mode with all dependencies
+- **Verifies** the installation and CLI entry point
+
+**Lighter install profiles:**
+
+```bash
+./setup.sh --core     # Core text pipeline only (~500 MB)
+./setup.sh --dev      # Core + dev tools (pytest, black, ruff, mypy)
+./setup.sh --help     # Show all options
+```
+
+After setup completes, activate the environment and you're ready:
+
+```bash
+source .venv/bin/activate    # Linux / macOS / WSL
+# or .\.venv\Scripts\activate  # Windows (PowerShell)
+
+auralith-pipeline --help
+```
+
+### Manual installation
+
+<details>
+<summary>Click to expand manual steps</summary>
+
+```bash
+git clone https://github.com/AuralithAI/Auralith-Data-Pipeline.git
+cd Auralith-Data-Pipeline
+
+python -m venv .venv
+source .venv/bin/activate  # Linux/Mac
+# or .\.venv\Scripts\activate  # Windows
 
 # Recommended — install everything (includes multimodal, cloud, dev tools)
 pip install -e ".[all]"            # ~3 GB with PyTorch
@@ -107,6 +176,8 @@ pip install -e ".[distributed]"    # + Ray
 pip install -e ".[multimodal]"     # + Video + image + audio (PyTorch)
 pip install -e ".[cloud,pdf]"      # + Cloud storage + PDF extraction
 ```
+
+</details>
 
 > **Tip:** If you plan to use the full CLI (tokenizer training, multimodal
 > processing, distributed jobs), install with `[all]` to avoid missing
@@ -154,10 +225,19 @@ Organise your data into a single directory. The pipeline auto-detects file types
 
 | Modality | Accepted formats |
 |----------|-----------------|
-| Text | `.txt`, `.md`, `.rst`, `.csv`, `.json`, `.jsonl` |
-| Image | `.jpg`, `.jpeg`, `.png`, `.bmp`, `.tiff`, `.npy` |
-| Audio | `.wav`, `.flac`, `.ogg`, `.npy` |
+| Text | `.txt`, `.md`, `.rst`, `.csv`, `.json`, `.jsonl`, `.tsv`, `.xml`, `.html`, `.py`, `.rs` |
+| Image | `.jpg`, `.jpeg`, `.png`, `.bmp`, `.tiff`, `.webp` |
+| Audio | `.wav`, `.mp3`, `.flac`, `.ogg`, `.m4a` |
 | Video | `.mp4`, `.avi`, `.mov`, `.mkv`, `.webm` |
+| Image / Audio | `.npy` — resolved by **parent directory name** (see below) |
+
+> **`.npy` disambiguation:** Because `.npy` arrays can represent either
+> images (H, W, 3) or audio waveforms, the pipeline inspects the parent
+> directory name.  Place image arrays under a folder whose name contains
+> `image`, `img`, `photo`, `picture`, or `visual`; place audio arrays
+> under a folder containing `audio`, `speech`, `sound`, `music`, or
+> `waveform`.  Files in directories that match neither keyword are
+> skipped.
 
 ```bash
 data/raw/
@@ -570,6 +650,75 @@ Each shard contains 4 tensors matching the [SafeTensors Schema v2](#safetensors-
 | 200,000+ | Audio VQ codes |
 | 300,000+ | Video VQ codes |
 
+## Distributed Processing
+
+For large datasets, distribute tokenization and sharding across multiple
+CPU cores or machines. Two modes are supported:
+
+### Embedded Mode (single machine, no Redis)
+
+Spins up a coordinator and *N* workers **in-process** using an in-memory
+state store — perfect for a beefy server with many cores:
+
+```bash
+auralith-pipeline submit-job \
+  -c configs/distributed.yaml \
+  -i data/raw/ \
+  -o shards/ \
+  -t tokenizers/ \
+  --embedded \
+  -w 8                   # 8 workers
+```
+
+### External Mode (multi-machine, Redis)
+
+Run the coordinator, workers, and job submission in separate terminals
+(or on separate machines). Requires a Redis instance for shared state.
+
+```bash
+# Terminal 1 — start the coordinator
+auralith-pipeline coordinator \
+  -c configs/distributed.yaml \
+  --host 0.0.0.0 --port 8080
+
+# Terminal 2..N — start workers (can be on different machines)
+auralith-pipeline worker \
+  -c configs/distributed.yaml \
+  --coordinator 10.0.0.1:8080 \
+  --worker-id worker-1
+
+# Terminal N+1 — submit the job
+auralith-pipeline submit-job \
+  -c configs/distributed.yaml \
+  -i data/raw/ -o shards/ -t tokenizers/ \
+  --external
+```
+
+### How it works
+
+1. `DistributedPipeline` scans the input directory for raw files.
+2. Files are split into **tasks** (`--files-per-task`, default 500).
+3. Tasks are submitted to the `Coordinator`, which assigns them to
+   workers via a pluggable strategy (round-robin, least-busy, or dynamic).
+4. Each `Worker` tokenizes its assigned files and writes SafeTensors shards.
+5. The coordinator monitors heartbeats; if a worker dies, its tasks are
+   automatically requeued (up to `max_retries`).
+6. The pipeline polls until all tasks complete (or time out).
+
+### Cloud Redis
+
+For production multi-machine deployments, point the coordinator at a managed
+Redis instance (ElastiCache, Memorystore, etc.):
+
+```yaml
+# configs/distributed.yaml
+coordinator:
+  state_store_type: redis
+  state_store_host: my-redis.xxxx.cache.amazonaws.com
+  state_store_port: 6379
+  state_store_password: "<your-auth-token>"
+```
+
 ## Performance
 
 | Operation | Speed | Notes |
@@ -634,7 +783,13 @@ auralith_pipeline/
 ├── storage/
 │   └── backends.py               # HF Hub, S3, GCS, Azure
 ├── distributed/
-│   └── ray_runner.py             # Ray distributed runner
+│   ├── coordinator.py            # Job manager, task scheduling, failure recovery
+│   ├── worker.py                 # Worker node (tokenize + shard writing)
+│   ├── pipeline.py               # DistributedPipeline (embedded + external modes)
+│   ├── state.py                  # StateStore ABC (Redis + InMemory)
+│   ├── strategies.py             # Round-robin, least-busy, dynamic assignment
+│   ├── client.py                 # Monitoring / control client
+│   └── config.py                 # Distributed config dataclasses
 ├── spark/                        # Apache Spark transforms
 └── utils/
     ├── helpers.py                # Formatting utilities
@@ -649,6 +804,7 @@ docker/kubernetes/
 
 tests/
 ├── test_cli.py                   # CLI command tests (process, train-tokenizer, etc.)
+├── test_distributed.py           # Distributed module tests (50 tests)
 ├── test_pipeline.py              # Core pipeline tests
 ├── test_tokenization.py          # Tokenizer tests
 ├── test_e2e_schema.py            # E2E validation
@@ -671,6 +827,43 @@ export MLFLOW_TRACKING_URI=http://mlflow.internal:5000
 # W&B (optional)
 export WANDB_API_KEY=xxxxx
 ```
+
+## Releasing
+
+Releases are fully automated via GitHub Actions. When a version tag is pushed, the pipeline:
+
+1. **Validates** the tag matches `pyproject.toml` and `__init__.py`
+2. **Tests** across Python 3.10 / 3.11 / 3.12 × Linux / macOS / Windows
+3. **Builds** sdist + wheels per platform
+4. **Publishes** to PyPI via OIDC trusted publisher (no API tokens needed)
+5. **Creates** a GitHub Release with auto-generated changelog and build assets
+6. **Verifies** the published package is installable on all three platforms
+
+### Cutting a release
+
+```bash
+# Option A: Use the bump script (recommended)
+chmod +x scripts/bump-version.sh
+./scripts/bump-version.sh 2.1.0 --push   # bumps files, commits, tags, pushes
+
+# Option B: Manual steps
+# 1. Update version in pyproject.toml and src/auralith_pipeline/__init__.py
+# 2. Commit and tag:
+git commit -am "release: v2.1.0"
+git tag -a v2.1.0 -m "Release v2.1.0"
+git push origin HEAD && git push origin v2.1.0
+```
+
+### Pre-releases
+
+```bash
+./scripts/bump-version.sh 2.1.0-rc.1 --push   # publishes to TestPyPI
+pip install -i https://test.pypi.org/simple/ auralith-data-pipeline==2.1.0rc1
+```
+
+### Release bot
+
+A **Release Drafter** bot automatically creates a draft GitHub Release every time a PR is merged to `main`. PRs are auto-labelled based on changed files, and the draft changelog is categorised into Features / Bug Fixes / Dependencies / etc. When you push a version tag, the actual release replaces the draft.
 
 ## License
 

@@ -9,7 +9,7 @@ from auralith_pipeline.distributed.config import (
 )
 from auralith_pipeline.distributed.coordinator import Coordinator, JobManager
 from auralith_pipeline.distributed.pipeline import DistributedPipeline
-from auralith_pipeline.distributed.state import RedisStateStore, StateStore
+from auralith_pipeline.distributed.state import InMemoryStateStore, RedisStateStore, StateStore
 from auralith_pipeline.distributed.strategies import (
     LoadBalancingStrategy,
     TaskDistributionStrategy,
@@ -29,6 +29,7 @@ __all__ = [
     "DistributedClient",
     "StateStore",
     "RedisStateStore",
+    "InMemoryStateStore",
     "LoadBalancingStrategy",
     "TaskDistributionStrategy",
 ]

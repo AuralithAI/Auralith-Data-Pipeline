@@ -2,6 +2,7 @@
 
 import json
 import logging
+import threading
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any
@@ -55,6 +56,32 @@ class StateStore(ABC):
     @abstractmethod
     def queue_length(self, queue_name: str) -> int:
         """Get the length of a queue."""
+        pass
+
+    @abstractmethod
+    def get_all_workers(self) -> list[str]:
+        """Return IDs of all workers with active heartbeats."""
+        pass
+
+    @abstractmethod
+    def check_heartbeat(self, worker_id: str) -> bool:
+        """Return True if the worker's heartbeat key is alive."""
+        pass
+
+    @abstractmethod
+    def set_heartbeat(self, worker_id: str, ttl: int = 30) -> None:
+        """Set worker heartbeat with TTL."""
+        pass
+
+    @abstractmethod
+    def atomic_update(self, key: str, update_fn: Any) -> Any:
+        """Atomically read-modify-write a value.
+
+        ``update_fn`` receives the current value (or ``None``) and must
+        return the new value to store.  Implementations must guarantee
+        that no other write to *key* can interleave between the read
+        and the write.
+        """
         pass
 
 
@@ -186,13 +213,42 @@ class RedisStateStore(StateStore):
         keys = self.client.keys(pattern)
         return [key.replace("heartbeat:", "") for key in keys]
 
+    def atomic_update(self, key: str, update_fn: Any) -> Any:
+        """Atomically read-modify-write using a Redis WATCH/MULTI pipeline.
+
+        Retries automatically on contention (WatchError).
+        """
+        if not self.client:
+            self.connect()
+
+        while True:
+            try:
+                pipe = self.client.pipeline(True)  # MULTI/EXEC
+                pipe.watch(key)
+                raw = pipe.get(key)
+                current = json.loads(raw) if raw else None
+                updated = update_fn(current)
+                pipe.multi()
+                pipe.set(key, json.dumps(updated))
+                pipe.execute()
+                return updated
+            except Exception:
+                # WatchError or similar — retry
+                continue
+
 
 class InMemoryStateStore(StateStore):
-    """In-memory state storage for testing/development."""
+    """Thread-safe in-memory state storage for testing/development.
+
+    All mutations to ``self.data`` and ``self.queues`` are guarded by a
+    reentrant lock so that embedded-mode workers (running as concurrent
+    threads) cannot corrupt shared state.
+    """
 
     def __init__(self):
-        self.data = {}
-        self.queues = {}
+        self.data: dict[str, Any] = {}
+        self.queues: dict[str, list[Any]] = {}
+        self._lock = threading.RLock()
 
     def connect(self):
         """No-op for in-memory store."""
@@ -203,34 +259,74 @@ class InMemoryStateStore(StateStore):
         pass
 
     def set(self, key: str, value: Any, ttl: int | None = None):
-        """Set a value in memory."""
-        self.data[key] = value
-        # TTL not implemented for simplicity
+        """Set a value in memory (thread-safe)."""
+        with self._lock:
+            self.data[key] = value
 
     def get(self, key: str) -> Any:
-        """Get a value from memory."""
-        return self.data.get(key)
+        """Get a value from memory (thread-safe)."""
+        with self._lock:
+            return self.data.get(key)
 
     def delete(self, key: str):
-        """Delete a key from memory."""
-        self.data.pop(key, None)
+        """Delete a key from memory (thread-safe)."""
+        with self._lock:
+            self.data.pop(key, None)
 
     def exists(self, key: str) -> bool:
-        """Check if a key exists in memory."""
-        return key in self.data
+        """Check if a key exists in memory (thread-safe)."""
+        with self._lock:
+            return key in self.data
 
     def push_queue(self, queue_name: str, item: Any):
-        """Push an item to an in-memory queue."""
-        if queue_name not in self.queues:
-            self.queues[queue_name] = []
-        self.queues[queue_name].append(item)
+        """Push an item to an in-memory queue (thread-safe)."""
+        with self._lock:
+            if queue_name not in self.queues:
+                self.queues[queue_name] = []
+            self.queues[queue_name].append(item)
 
     def pop_queue(self, queue_name: str, timeout: int = 0) -> Any:
-        """Pop an item from an in-memory queue."""
-        if queue_name not in self.queues or not self.queues[queue_name]:
-            return None
-        return self.queues[queue_name].pop(0)
+        """Pop an item from an in-memory queue (thread-safe)."""
+        with self._lock:
+            if queue_name not in self.queues or not self.queues[queue_name]:
+                return None
+            return self.queues[queue_name].pop(0)
 
     def queue_length(self, queue_name: str) -> int:
-        """Get the length of an in-memory queue."""
-        return len(self.queues.get(queue_name, []))
+        """Get the length of an in-memory queue (thread-safe)."""
+        with self._lock:
+            return len(self.queues.get(queue_name, []))
+
+    def set_heartbeat(self, worker_id: str, ttl: int = 30):
+        """Set worker heartbeat (thread-safe, TTL ignored in memory store)."""
+        with self._lock:
+            key = f"heartbeat:{worker_id}"
+            self.data[key] = {
+                "timestamp": datetime.now().isoformat(),
+                "status": "alive",
+            }
+
+    def check_heartbeat(self, worker_id: str) -> bool:
+        """Check if worker heartbeat is alive (thread-safe)."""
+        with self._lock:
+            key = f"heartbeat:{worker_id}"
+            return key in self.data
+
+    def get_all_workers(self) -> list[str]:
+        """Get all active worker IDs (thread-safe)."""
+        with self._lock:
+            prefix = "heartbeat:"
+            return [key[len(prefix) :] for key in self.data if key.startswith(prefix)]
+
+    def atomic_update(self, key: str, update_fn: Any) -> Any:
+        """Atomically read-modify-write a value (thread-safe).
+
+        ``update_fn`` receives the current value (or ``None``) and must
+        return the new value to store.  The entire read → mutate → write
+        cycle runs under a single lock acquisition.
+        """
+        with self._lock:
+            current = self.data.get(key)
+            updated = update_fn(current)
+            self.data[key] = updated
+            return updated
