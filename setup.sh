@@ -81,7 +81,7 @@ done
 
 echo ""
 echo -e "${BOLD}╔══════════════════════════════════════════════════════╗${NC}"
-echo -e "${BOLD}║       Auralith Data Pipeline — Setup                ║${NC}"
+echo -e "${BOLD}║       Auralith Data Pipeline — Setup                 ║${NC}"
 echo -e "${BOLD}╚══════════════════════════════════════════════════════╝${NC}"
 echo ""
 
@@ -383,7 +383,7 @@ case "$MODE" in
         # Set up pre-commit hooks if available
         if command -v pre-commit &>/dev/null; then
             info "Installing pre-commit hooks ..."
-            pre-commit install --quiet
+            pre-commit install
             ok "Pre-commit hooks installed"
         fi
         ;;
@@ -394,7 +394,7 @@ case "$MODE" in
         # Set up pre-commit hooks
         if command -v pre-commit &>/dev/null; then
             info "Installing pre-commit hooks ..."
-            pre-commit install --quiet
+            pre-commit install
             ok "Pre-commit hooks installed"
         fi
         ;;
