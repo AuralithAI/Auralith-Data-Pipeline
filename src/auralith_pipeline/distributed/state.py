@@ -316,7 +316,7 @@ class InMemoryStateStore(StateStore):
         """Get all active worker IDs (thread-safe)."""
         with self._lock:
             prefix = "heartbeat:"
-            return [key[len(prefix):] for key in self.data if key.startswith(prefix)]
+            return [key[len(prefix) :] for key in self.data if key.startswith(prefix)]
 
     def atomic_update(self, key: str, update_fn: Any) -> Any:
         """Atomically read-modify-write a value (thread-safe).

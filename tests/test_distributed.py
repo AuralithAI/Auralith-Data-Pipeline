@@ -126,9 +126,11 @@ class TestInMemoryStateStore:
         def worker():
             barrier.wait()
             for _ in range(increments_per_thread):
+
                 def inc(job):
                     job["completed_tasks"] = job.get("completed_tasks", 0) + 1
                     return job
+
                 store.atomic_update("job:stress", inc)
 
         threads = [threading.Thread(target=worker) for _ in range(n_threads)]
