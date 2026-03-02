@@ -830,38 +830,35 @@ export WANDB_API_KEY=xxxxx
 
 ## Releasing
 
-Releases are **fully automated** — no manual tagging required. Just merge a PR to `main` and the pipeline handles everything:
+Releases are **fully automated** with zero-touch versioning. There are **no hardcoded version strings** anywhere in the source — the version is derived entirely from git tags at build time via [`hatch-vcs`](https://github.com/ofek/hatch-vcs).
 
-1. **Auto Tag** — `auto-tag.yml` detects the version in `pyproject.toml`, creates a git tag `vX.Y.Z`, and pushes it
-2. **Validate** — `release.yml` verifies the tag matches `pyproject.toml` and `__init__.py`
+### How it works
+
+Every PR merge to `main` triggers the full release cycle:
+
+1. **Auto Tag** — `auto-tag.yml` reads the latest `vX.Y.Z` tag, increments the **patch** number, and pushes a new tag
+2. **Validate** — `release.yml` verifies the tag resolves correctly via `hatch-vcs`
 3. **Test** — runs full matrix across Python 3.10 / 3.11 / 3.12 × Linux / macOS / Windows
-4. **Build** — creates sdist + wheels per platform
+4. **Build** — creates a universal `py3-none-any` sdist + wheel (pure Python, no per-OS builds)
 5. **Publish** — pushes to PyPI via OIDC trusted publisher (no API tokens needed)
 6. **Release** — creates a GitHub Release with auto-generated changelog and build assets
 7. **Verify** — installs the published package from PyPI on all three platforms
 
-### Bumping the version
+### Major / Minor bumps
 
-When your PR includes a version bump, the release happens automatically on merge:
+Patch versions (`0.1.1` → `0.1.2`) are created automatically. For **minor** or **major** bumps, use the helper script:
 
 ```bash
-# In your feature branch, bump the version:
-./scripts/bump-version.sh 0.2.0     # updates pyproject.toml + __init__.py
-
-# Commit and push (as part of your PR)
-git add pyproject.toml src/auralith_pipeline/__init__.py
-git commit -m "release: v0.2.0"
-git push
-
-# Merge the PR → auto-tag creates v0.2.0 → release pipeline runs
+./scripts/bump-version.sh 0.2.0    # creates + pushes v0.2.0 tag
+./scripts/bump-version.sh 1.0.0    # creates + pushes v1.0.0 tag
 ```
 
-> **Tip:** Not every PR needs a version bump. Only include a version change when you're ready to cut a release. PRs without version changes are accumulated by the Release Drafter bot.
+The pushed tag triggers `release.yml` — no source files need editing.
 
 ### Pre-releases
 
 ```bash
-./scripts/bump-version.sh 1.0.0-rc.1 --push   # publishes to TestPyPI
+./scripts/bump-version.sh 1.0.0-rc.1    # creates + pushes v1.0.0-rc.1 tag
 pip install -i https://test.pypi.org/simple/ auralith-data-pipeline==1.0.0rc1
 ```
 

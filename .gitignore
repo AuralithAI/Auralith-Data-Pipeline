@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Auto-generated version file (hatch-vcs)
+src/auralith_pipeline/_version.py
+
 # C extensions
 *.so
 
