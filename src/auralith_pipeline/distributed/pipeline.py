@@ -95,7 +95,7 @@ class DistributedPipeline:
         dict
             Final job summary with completion stats.
         """
-        timeout = timeout or self.job_config.timeout
+        timeout = timeout if timeout is not None else self.job_config.timeout
         in_path = Path(input_dir)
         out_path = Path(output_dir)
 
