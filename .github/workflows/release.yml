@@ -4,24 +4,27 @@
 #  Trigger: push a version tag  →  v0.1.0, v1.0.0-rc.1, etc.
 #           (tags are created automatically by auto-tag.yml on PR merge)
 #
+#  Version is derived from git tags via hatch-vcs — no hardcoded strings.
+#
 #  Pipeline:
-#    1. Validate tag matches pyproject.toml version
+#    1. Validate tag resolves via hatch-vcs
 #    2. Run full test matrix (3.10 / 3.11 / 3.12 × Linux / macOS / Windows)
-#    3. Build sdist + platform wheels
+#    3. Build universal sdist + py3-none-any wheel
 #    4. Publish to PyPI via OIDC trusted publisher (no API tokens)
 #    5. Create GitHub Release with auto-generated changelog
+#    6. Verify published package is installable on all platforms
 # ──────────────────────────────────────────────────────────────────────
 name: Release
 
 on:
   push:
     tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"        # stable:   v2.1.0
-      - "v[0-9]+.[0-9]+.[0-9]+-*"      # pre:      v2.1.0-rc.1, v2.1.0-beta.2
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
 
 permissions:
-  contents: write          # create GitHub release + upload assets
-  id-token: write          # OIDC token for PyPI trusted publisher
+  contents: write
+  id-token: write
   actions: read
 
 env:
@@ -65,33 +68,20 @@ jobs:
           TAG_VER="${GITHUB_REF#refs/tags/v}"
           # Strip pre-release suffix for comparison (v2.1.0-rc.1 → 2.1.0)
           TAG_BASE="${TAG_VER%%-*}"
-          TOML_VER=$(python3 -c "
-          import re
-          with open('pyproject.toml') as f:
-              m = re.search(r'version\s*=\s*\"([^\"]+)\"', f.read())
-              print(m.group(1) if m else '')
-          ")
-          echo "Tag base:      ${TAG_BASE}"
-          echo "pyproject.toml: ${TOML_VER}"
-          if [ "$TAG_BASE" != "$TOML_VER" ]; then
-            echo "::error::Version mismatch! Tag=${TAG_BASE} vs pyproject.toml=${TOML_VER}"
-            exit 1
-          fi
 
-      - name: Verify tag matches __init__.py
-        run: |
-          TAG_VER="${GITHUB_REF#refs/tags/v}"
-          TAG_BASE="${TAG_VER%%-*}"
-          INIT_VER=$(python3 -c "
-          import re
-          with open('src/auralith_pipeline/__init__.py') as f:
-              m = re.search(r'__version__\s*=\s*\"([^\"]+)\"', f.read())
-              print(m.group(1) if m else '')
+          # With hatch-vcs the version is dynamic, so verify hatch-vcs
+          # can resolve it from the tag. Install hatch-vcs first.
+          pip install hatchling hatch-vcs
+          RESOLVED=$(python3 -c "
+          from hatchling.metadata.core import ProjectMetadata
+          from hatchling.plugin.manager import PluginManager
+          m = ProjectMetadata('.', PluginManager())
+          print(m.version)
           ")
-          echo "Tag base:      ${TAG_BASE}"
-          echo "__init__.py:   ${INIT_VER}"
-          if [ "$TAG_BASE" != "$INIT_VER" ]; then
-            echo "::error::Version mismatch! Tag=${TAG_BASE} vs __init__.py=${INIT_VER}"
+          echo "Tag base:        ${TAG_BASE}"
+          echo "hatch-vcs resolved: ${RESOLVED}"
+          if [ "$TAG_BASE" != "$RESOLVED" ]; then
+            echo "::error::Version mismatch! Tag=${TAG_BASE} vs hatch-vcs=${RESOLVED}"
             exit 1
           fi
 
@@ -129,15 +119,12 @@ jobs:
         run: pytest tests/ -v --tb=short
 
   # ════════════════════════════════════════════════════════════════════
-  #  3. Build — sdist + wheels per platform
+  #  3. Build — sdist + universal wheel (pure Python = one wheel for all OS)
   # ════════════════════════════════════════════════════════════════════
   build:
-    name: Build (${{ matrix.os }})
+    name: Build package
     needs: test
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -151,16 +138,24 @@ jobs:
       - name: Install build tools
         run: pip install build twine
 
-      - name: Build package
+      - name: Build sdist + wheel
         run: python -m build
 
-      - name: Verify package
+      - name: List built artifacts
+        run: |
+          echo "📦 Built distributions:"
+          ls -lh dist/
+          echo ""
+          echo "Wheel tags:"
+          python -m zipfile -l dist/*.whl | head -5
+
+      - name: Verify package metadata
         run: twine check dist/*
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: dist-${{ matrix.os }}
+          name: dist
           path: dist/*
           retention-days: 5
 
@@ -177,12 +172,11 @@ jobs:
     permissions:
       id-token: write    # OIDC for PyPI trusted publisher
     steps:
-      - name: Download all build artifacts
+      - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: dist-*
+          name: dist
           path: dist/
-          merge-multiple: true
 
       - name: List distribution files
         run: ls -la dist/
@@ -215,12 +209,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Download all build artifacts
+      - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: dist-*
+          name: dist
           path: dist/
-          merge-multiple: true
 
       - name: Generate changelog
         id: changelog

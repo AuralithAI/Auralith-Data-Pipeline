@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "auralith-data-pipeline"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Production-grade data collection and processing pipeline for training LLMs and multimodal AI"
 readme = "README.md"
 license = "Apache-2.0"
@@ -116,6 +116,15 @@ Repository = "https://github.com/AuralithAI/Auralith-Data-Pipeline"
 Issues = "https://github.com/AuralithAI/Auralith-Data-Pipeline/issues"
 Changelog = "https://github.com/AuralithAI/Auralith-Data-Pipeline/releases"
 
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+version_scheme = "no-guess-dev"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/auralith_pipeline/_version.py"
+
 [tool.hatch.build.targets.sdist]
 include = [
     "/src",
@@ -130,10 +139,12 @@ packages = ["src/auralith_pipeline"]
 line-length = 100
 target-version = ["py310", "py311", "py312"]
 include = '\.pyi?$'
+extend-exclude = '_version\.py'
 
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+exclude = ["src/auralith_pipeline/_version.py"]
 
 [tool.ruff.lint]
 select = [

@@ -12,7 +12,16 @@ Usage:
     pipeline.run()
 """
 
-__version__ = "0.1.0"
+try:
+    from auralith_pipeline._version import __version__
+except ImportError:
+    try:
+        from importlib.metadata import version
+
+        __version__ = version("auralith-data-pipeline")
+    except Exception:
+        __version__ = "0.0.0-dev"
+
 __author__ = "AuralithAI"
 
 from auralith_pipeline.config.pipeline_config import PipelineConfig
