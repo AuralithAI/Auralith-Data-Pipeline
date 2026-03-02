@@ -111,6 +111,8 @@ jobs:
         run: pip install build twine
 
       - name: Build sdist + wheel
+        env:
+          SETUPTOOLS_SCM_PRETEND_VERSION: ${{ steps.version.outputs.version }}
         run: python -m build
 
       - name: Verify
