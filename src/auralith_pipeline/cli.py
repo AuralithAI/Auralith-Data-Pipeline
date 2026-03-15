@@ -981,6 +981,10 @@ def _load_all_tokenizers(tokenizers_dir: Path) -> dict[str, Any]:
         result["video"] = VideoTokenizer.load(video_dir)
         logger.info("Loaded video VQ tokenizer from %s", video_dir)
 
+    # Code reuses the BPE text tokenizer — no separate training needed.
+    if result["text"] is not None:
+        result["code"] = result["text"]
+
     return result
 
 
@@ -1037,6 +1041,18 @@ def _tokenize_file(
             vid_end = BPETokenizer.SPECIAL_TOKENS["<VIDEO_END>"]
             input_ids = [vid_start] + [c + _VIDEO_TOKEN_OFFSET for c in codes] + [vid_end]
             modality_mask = [_MODALITY_ID["video"]] * len(input_ids)
+
+        elif modality == "code":
+            text = file_path.read_text(encoding="utf-8", errors="replace")
+            if not text.strip():
+                return None
+            from auralith_pipeline.tokenization import BPETokenizer
+
+            code_start = BPETokenizer.SPECIAL_TOKENS["<CODE>"]
+            code_end = BPETokenizer.SPECIAL_TOKENS["<CODE_END>"]
+            body_ids = tokenizer.encode(text, add_special_tokens=False, max_length=max_seq_len - 2)
+            input_ids = [code_start] + body_ids + [code_end]
+            modality_mask = [_MODALITY_ID["code"]] * len(input_ids)
 
         else:
             return None
@@ -1511,6 +1527,137 @@ def spark_submit(
         raise
     finally:
         runner.stop()
+
+
+@main.command("clone-repo")
+@click.option("--url", required=True, help="HTTPS GitHub URL to clone")
+@click.option(
+    "--pat",
+    envvar="GITHUB_TOKEN",
+    default=None,
+    help="GitHub Personal Access Token (or set GITHUB_TOKEN env var)",
+)
+@click.option("--ref", default=None, help="Branch or tag to checkout (default: default branch)")
+@click.option(
+    "--output",
+    "-o",
+    "output_dir",
+    type=click.Path(),
+    required=True,
+    help="Directory where code shards are written",
+)
+@click.option(
+    "--tokenizers",
+    "tokenizers_dir",
+    type=click.Path(exists=True),
+    required=True,
+    help="Root folder of trained tokenizers (must contain text/ subdir)",
+)
+@click.option("--max-seq-len", type=int, default=4096, help="Max sequence length (default: 4096)")
+@click.option(
+    "--shard-size", type=int, default=10000, help="Max samples per shard (default: 10000)"
+)
+@click.option("--max-samples", type=int, default=None, help="Cap on total code samples emitted")
+def clone_repo(
+    url: str,
+    pat: str | None,
+    ref: str | None,
+    output_dir: str,
+    tokenizers_dir: str,
+    max_seq_len: int,
+    shard_size: int,
+    max_samples: int | None,
+):
+    """Clone a GitHub repo and produce SafeTensors shards from its code.
+
+    \b
+    Performs a shallow clone, walks the repo for code files, chunks
+    them (AST-aware when tree-sitter is installed), wraps each chunk
+    with <CODE>…<CODE_END>, BPE-encodes, and writes .safetensors shards.
+
+    \b
+    Example:
+        auralith-pipeline clone-repo \\
+            --url https://github.com/pytorch/pytorch \\
+            --output shards/pytorch/ \\
+            --tokenizers tokenizers/
+    """
+    from auralith_pipeline.config.pipeline_config import CodeConfig
+    from auralith_pipeline.sources.code import GitHubCodeSource
+    from auralith_pipeline.tokenization import BPETokenizer
+
+    tok_path = Path(tokenizers_dir)
+    out_path = Path(output_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    click.echo("=" * 60)
+    click.echo("Clone Repo → SafeTensors Shards")
+    click.echo("=" * 60)
+    click.echo(f"  URL:         {url}")
+    click.echo(f"  Ref:         {ref or '(default branch)'}")
+    click.echo(f"  Output:      {out_path}")
+    click.echo(f"  Tokenizers:  {tok_path}")
+    click.echo(f"  Max seq len: {max_seq_len}")
+
+    # Load text BPE tokenizer (code reuses it)
+    text_dir = tok_path / "text"
+    if not (text_dir.is_dir() and (text_dir / "vocab.json").exists()):
+        click.echo("[ERROR] text tokenizer not found in tokenizers directory!", err=True)
+        raise SystemExit(1)
+    bpe = BPETokenizer.load(text_dir)
+
+    code_start = BPETokenizer.SPECIAL_TOKENS["<CODE>"]
+    code_end = BPETokenizer.SPECIAL_TOKENS["<CODE_END>"]
+
+    config = CodeConfig()
+
+    click.echo("\n[1/3] Cloning repository ...")
+    with GitHubCodeSource(
+        url=url,
+        pat=pat,
+        ref=ref,
+        config=config,
+        max_samples=max_samples,
+    ) as source:
+        click.echo(f"  Found {len(source)} code files")
+
+        click.echo("\n[2/3] Tokenizing code chunks ...")
+        samples: list[dict[str, Any]] = []
+        for sample in source:
+            body_ids = bpe.encode(
+                sample.content,
+                add_special_tokens=False,
+                max_length=max_seq_len - 2,
+            )
+            input_ids = [code_start] + body_ids + [code_end]
+            modality_mask = [_MODALITY_ID["code"]] * len(input_ids)
+
+            input_ids = input_ids[:max_seq_len]
+            modality_mask = modality_mask[:max_seq_len]
+
+            samples.append(
+                {
+                    "input_ids": input_ids,
+                    "modality_mask": modality_mask,
+                    "source": sample.source,
+                }
+            )
+
+        click.echo(f"  Tokenized {len(samples)} code chunks")
+
+        if not samples:
+            click.echo("[WARNING] No code samples produced.")
+            return
+
+        click.echo("\n[3/3] Writing shards ...")
+        num_shards = _write_shards(samples, out_path, max_seq_len, shard_size)
+
+    click.echo("\n" + "=" * 60)
+    click.echo(
+        f"[OK] Created {num_shards} shard(s) in {out_path}  "
+        f"({len(samples)} code chunks, max_seq_len={max_seq_len})"
+    )
+    click.echo("=" * 60)
 
 
 if __name__ == "__main__":

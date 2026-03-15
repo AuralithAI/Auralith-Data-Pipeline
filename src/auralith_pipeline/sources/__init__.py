@@ -1,5 +1,6 @@
 """Data sources module."""
 
+from auralith_pipeline.sources.code import GitHubCodeSource, LocalCodeSource
 from auralith_pipeline.sources.data_sources import (
     DATASET_REGISTRY,
     DEPRECATED_DATASETS,
@@ -17,6 +18,8 @@ __all__ = [
     "DataSample",
     "HuggingFaceSource",
     "LocalFileSource",
+    "LocalCodeSource",
+    "GitHubCodeSource",
     "JSONLSource",
     "VideoSource",
     "VideoFrameSampler",

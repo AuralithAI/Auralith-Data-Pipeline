@@ -15,15 +15,26 @@ class TextNormalizer:
     """Normalize text for consistent processing."""
 
     def __init__(self):
-        # Common replacements
+        # Common replacements — applied to prose text only.
         self.replacements = [
             (r"\s+", " "),  # Multiple spaces to single
             (r"\n{3,}", "\n\n"),  # Multiple newlines to double
             (r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", ""),  # Control chars
         ]
 
-    def normalize(self, text: str) -> str:
-        """Normalize text."""
+        # Code-safe replacements — preserve indentation and newlines.
+        self._code_replacements = [
+            (r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", ""),  # Control chars only
+        ]
+
+    def normalize(self, text: str, modality: str = "text") -> str:
+        """Normalize text.
+
+        When *modality* is ``"code"`` whitespace-collapsing rules are
+        skipped so that indentation-sensitive languages (Python, YAML,
+        etc.) are not destroyed.  Only Unicode fix-ups and control-char
+        stripping are applied.
+        """
         try:
             import ftfy
 
@@ -31,7 +42,8 @@ class TextNormalizer:
         except ImportError:
             pass
 
-        for pattern, replacement in self.replacements:
+        replacements = self._code_replacements if modality == "code" else self.replacements
+        for pattern, replacement in replacements:
             text = re.sub(pattern, replacement, text)
 
         return text.strip()
@@ -55,8 +67,14 @@ class QualityFilter:
         return self._lang_detector
 
     def passes_filter(self, sample: DataSample) -> bool:
-        """Check if sample passes quality filters."""
+        """Check if sample passes quality filters.
+
+        For code samples several prose-oriented heuristics (special-char
+        ratio, digit ratio, uppercase ratio, language detection) are
+        skipped because source code naturally triggers them.
+        """
         text = sample.content
+        is_code = sample.modality == "code"
 
         # Length check
         if len(text) < self.config.min_text_length:
@@ -72,31 +90,33 @@ class QualityFilter:
         if word_count > self.config.max_word_count:
             return False
 
-        # Special character ratio
-        special_chars = sum(1 for c in text if not c.isalnum() and not c.isspace())
-        if len(text) > 0 and special_chars / len(text) > self.config.max_special_char_ratio:
-            return False
+        # --- The checks below are skipped for code modality ---
+        if not is_code:
+            # Special character ratio
+            special_chars = sum(1 for c in text if not c.isalnum() and not c.isspace())
+            if len(text) > 0 and special_chars / len(text) > self.config.max_special_char_ratio:
+                return False
 
-        # Digit ratio
-        digits = sum(1 for c in text if c.isdigit())
-        if len(text) > 0 and digits / len(text) > self.config.max_digit_ratio:
-            return False
+            # Digit ratio
+            digits = sum(1 for c in text if c.isdigit())
+            if len(text) > 0 and digits / len(text) > self.config.max_digit_ratio:
+                return False
 
-        # Uppercase ratio
-        uppercase = sum(1 for c in text if c.isupper())
-        alpha = sum(1 for c in text if c.isalpha())
-        if alpha > 0 and uppercase / alpha > self.config.max_uppercase_ratio:
-            return False
+            # Uppercase ratio
+            uppercase = sum(1 for c in text if c.isupper())
+            alpha = sum(1 for c in text if c.isalpha())
+            if alpha > 0 and uppercase / alpha > self.config.max_uppercase_ratio:
+                return False
 
-        # Language detection
-        if self.config.allowed_languages:
-            try:
-                detect = self._get_lang_detector()
-                lang = detect(text[:1000])  # Use first 1000 chars for speed
-                if lang not in self.config.allowed_languages:
-                    return False
-            except Exception:
-                pass  # If detection fails, allow the sample
+            # Language detection
+            if self.config.allowed_languages:
+                try:
+                    detect = self._get_lang_detector()
+                    lang = detect(text[:1000])  # Use first 1000 chars for speed
+                    if lang not in self.config.allowed_languages:
+                        return False
+                except Exception:
+                    pass  # If detection fails, allow the sample
 
         return True
 
@@ -246,7 +266,10 @@ class DataPreprocessor:
 
             # Normalize
             if self.normalizer:
-                sample.content = self.normalizer.normalize(sample.content)
+                sample.content = self.normalizer.normalize(
+                    sample.content,
+                    modality=sample.modality,
+                )
 
             # Quality filter
             if not self.quality_filter.passes_filter(sample):

@@ -809,7 +809,7 @@ class TestExtensionConstants:
         assert ".txt" in _TEXT_EXTS
         assert ".md" in _TEXT_EXTS
         assert ".rst" in _TEXT_EXTS
-        assert ".py" in _TEXT_EXTS
+        assert ".py" not in _TEXT_EXTS
 
     def test_image_exts(self):
         assert ".jpg" in _IMAGE_EXTS
@@ -826,7 +826,7 @@ class TestExtensionConstants:
         assert ".npy" not in _AUDIO_EXTS
 
     def test_modality_ids(self):
-        assert _MODALITY_ID == {"text": 0, "image": 1, "audio": 2, "video": 3}
+        assert _MODALITY_ID == {"text": 0, "image": 1, "audio": 2, "video": 3, "code": 4}
 
 
 # ---------------------------------------------------------------------------

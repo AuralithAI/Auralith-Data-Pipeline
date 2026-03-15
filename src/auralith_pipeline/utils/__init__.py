@@ -3,6 +3,7 @@
 from auralith_pipeline.utils.file_types import (
     AUDIO_EXTS,
     AUDIO_TOKEN_OFFSET,
+    CODE_EXTS,
     IMAGE_EXTS,
     IMAGE_TOKEN_OFFSET,
     MODALITY_ID,
@@ -36,6 +37,7 @@ __all__ = [
     "IMAGE_EXTS",
     "AUDIO_EXTS",
     "VIDEO_EXTS",
+    "CODE_EXTS",
     "MODALITY_ID",
     "IMAGE_TOKEN_OFFSET",
     "AUDIO_TOKEN_OFFSET",

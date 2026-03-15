@@ -828,6 +828,23 @@ class MultimodalTokenizer:
                 modality_mask = modality_mask[: idx + 1] + vid_mask + modality_mask[idx + 1 :]
                 modality_mask[idx] = self.MODALITY_VIDEO
 
+        # --- Code region relabelling ---
+        # Code reuses BPE tokens (no VQ insertion / offset), so we only need
+        # to relabel the modality_mask for tokens enclosed in <CODE>…<CODE_END>.
+        code_start_id = self.text_tokenizer.SPECIAL_TOKENS.get("<CODE>", -1)
+        code_end_id = self.text_tokenizer.SPECIAL_TOKENS.get("<CODE_END>", -1)
+        if code_start_id != -1 and code_end_id != -1:
+            inside_code = False
+            for i, tid in enumerate(text_tokens):
+                if tid == code_start_id:
+                    inside_code = True
+                    modality_mask[i] = self.MODALITY_CODE
+                elif tid == code_end_id:
+                    modality_mask[i] = self.MODALITY_CODE
+                    inside_code = False
+                elif inside_code:
+                    modality_mask[i] = self.MODALITY_CODE
+
         # Truncate to max length
         if len(text_tokens) > max_length:
             text_tokens = text_tokens[:max_length]
