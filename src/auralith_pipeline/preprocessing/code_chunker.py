@@ -364,7 +364,12 @@ def _get_parser(language: str) -> object | None:
             parser = tree_sitter.Parser()
             parser.set_language(tree_sitter.Language(lang_mod.language()))
         except Exception:
-            pass
+             logger.debug(
+                 "tree-sitter parser not available for language '%s' via tree_sitter_%s",
+                 language,
+                 language,
+                 exc_info=True,
+             )
 
     _parser_cache[language] = parser
     return parser
