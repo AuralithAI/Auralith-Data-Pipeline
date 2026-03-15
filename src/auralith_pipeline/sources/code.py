@@ -1,13 +1,17 @@
 """Code data sources — local directories and GitHub repositories.
 
 Provides ``LocalCodeSource`` for ingesting code from a local directory
-tree, and ``GitHubCodeSource`` for shallow-cloning a GitHub repository
-(optionally using a PAT for private repos) and iterating over its code
-files via ``LocalCodeSource``.
+tree, and ``GitHubCodeSource`` for shallow-cloning a **public** GitHub
+repository and iterating over its code files via ``LocalCodeSource``.
 
 Both sources produce ``DataSample`` objects with ``modality="code"``
 and rich metadata (language, line range, function/class name, etc.)
 powered by :class:`~auralith_pipeline.preprocessing.code_chunker.CodeChunker`.
+
+.. note::
+   ``GitHubCodeSource`` only supports public repositories.  Training
+   data pipelines should never ingest private/proprietary code — doing
+   so risks leaking credentials and violating licence terms.
 """
 
 from __future__ import annotations
@@ -156,13 +160,13 @@ class LocalCodeSource(DataSource):
 
 
 class GitHubCodeSource(DataSource):
-    """Clone a GitHub repository and iterate over its code files.
+    """Clone a public GitHub repository and iterate over its code files.
 
     Performs a shallow ``git clone --depth 1`` into a temporary directory
     (or a user-specified path) and delegates to :class:`LocalCodeSource`.
 
-    Supports private repositories via a Personal Access Token (PAT)
-    passed explicitly or read from the ``GITHUB_TOKEN`` environment variable.
+    Only **public** repositories are supported.  Training data pipelines
+    should never ingest private/proprietary code.
 
     Use as a context manager to ensure cleanup of the temp clone::
 
@@ -174,8 +178,6 @@ class GitHubCodeSource(DataSource):
     ----------
     url:
         HTTPS GitHub URL (e.g. ``https://github.com/owner/repo``).
-    pat:
-        Personal access token.  Falls back to ``$GITHUB_TOKEN``.
     ref:
         Branch / tag to clone (default: repository default branch).
     output_dir:
@@ -190,14 +192,12 @@ class GitHubCodeSource(DataSource):
     def __init__(
         self,
         url: str,
-        pat: str | None = None,
         ref: str | None = None,
         output_dir: str | Path | None = None,
         config: CodeConfig | None = None,
         max_samples: int | None = None,
     ) -> None:
         self.url = url
-        self.pat = pat or os.environ.get("GITHUB_TOKEN")
         self.ref = ref
         self.config = config or CodeConfig()
         self.max_samples = max_samples
@@ -249,25 +249,16 @@ class GitHubCodeSource(DataSource):
             self._tmp_dir = tempfile.TemporaryDirectory(prefix="auralith_code_")
             clone_dir = Path(self._tmp_dir.name)
 
-        # Build clone URL (embed PAT for private repos)
-        clone_url = self.url
-        if self.pat:
-            # https://github.com/owner/repo  →
-            # https://<pat>@github.com/owner/repo
-            clone_url = clone_url.replace("https://", f"https://{self.pat}@")
-
         cmd = ["git", "clone", "--depth", "1"]
         if self.ref:
             cmd += ["--branch", self.ref]
-        cmd += [clone_url, str(clone_dir)]
+        cmd += [self.url, str(clone_dir)]
 
         logger.info("Cloning %s …", self.url)
         try:
             subprocess.run(cmd, check=True, capture_output=True, text=True)
         except subprocess.CalledProcessError as exc:
-            # Scrub PAT from error messages
-            safe_stderr = (exc.stderr or "").replace(self.pat, "***") if self.pat else exc.stderr
-            raise RuntimeError(f"git clone failed for {self.url}: {safe_stderr}") from exc
+            raise RuntimeError(f"git clone failed for {self.url}: {exc.stderr or ''}") from exc
 
         # Grab commit hash for metadata
         try:

@@ -82,13 +82,14 @@ class QualityFilter:
         if len(text) > self.config.max_text_length:
             return False
 
-        # Word count
-        words = text.split()
-        word_count = len(words)
-        if word_count < self.config.min_word_count:
-            return False
-        if word_count > self.config.max_word_count:
-            return False
+        # Word count (prose only)
+        if not is_code:
+            words = text.split()
+            word_count = len(words)
+            if word_count < self.config.min_word_count:
+                return False
+            if word_count > self.config.max_word_count:
+                return False
 
         # --- The checks below are skipped for code modality ---
         if not is_code:

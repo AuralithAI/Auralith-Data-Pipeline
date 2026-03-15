@@ -1530,13 +1530,7 @@ def spark_submit(
 
 
 @main.command("clone-repo")
-@click.option("--url", required=True, help="HTTPS GitHub URL to clone")
-@click.option(
-    "--pat",
-    envvar="GITHUB_TOKEN",
-    default=None,
-    help="GitHub Personal Access Token (or set GITHUB_TOKEN env var)",
-)
+@click.option("--url", required=True, help="HTTPS GitHub URL to clone (public repos only)")
 @click.option("--ref", default=None, help="Branch or tag to checkout (default: default branch)")
 @click.option(
     "--output",
@@ -1560,7 +1554,6 @@ def spark_submit(
 @click.option("--max-samples", type=int, default=None, help="Cap on total code samples emitted")
 def clone_repo(
     url: str,
-    pat: str | None,
     ref: str | None,
     output_dir: str,
     tokenizers_dir: str,
@@ -1568,12 +1561,15 @@ def clone_repo(
     shard_size: int,
     max_samples: int | None,
 ):
-    """Clone a GitHub repo and produce SafeTensors shards from its code.
+    """Clone a public GitHub repo and produce SafeTensors shards from its code.
 
     \b
     Performs a shallow clone, walks the repo for code files, chunks
     them (AST-aware when tree-sitter is installed), wraps each chunk
     with <CODE>…<CODE_END>, BPE-encodes, and writes .safetensors shards.
+
+    Only public repositories are supported.  Training data pipelines
+    should never ingest private/proprietary code.
 
     \b
     Example:
@@ -1614,7 +1610,6 @@ def clone_repo(
     click.echo("\n[1/3] Cloning repository ...")
     with GitHubCodeSource(
         url=url,
-        pat=pat,
         ref=ref,
         config=config,
         max_samples=max_samples,
