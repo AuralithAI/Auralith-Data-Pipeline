@@ -20,7 +20,6 @@ Output structure:
 
 import argparse
 import logging
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -65,8 +64,7 @@ def download_text(output_dir: Path, max_samples: int = 50_000) -> None:
     corpus = "\n".join(lines)
     output_file.write_text(corpus, encoding="utf-8")
     logger.info(
-        f"Saved {count:,} text samples to {output_file} "
-        f"({len(corpus) / 1_000_000:.1f} MB)"
+        f"Saved {count:,} text samples to {output_file} " f"({len(corpus) / 1_000_000:.1f} MB)"
     )
 
 
@@ -256,7 +254,8 @@ def main() -> None:
         ),
     )
     parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         type=str,
         default="data/raw",
         help="Output directory (default: data/raw)",
