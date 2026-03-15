@@ -314,6 +314,7 @@ DATASET_REGISTRY = {
         "text_column": "content",
         "description": "The Stack (deduplicated) - source code (3TB)",
         "split": "train",
+        "modality": "code",
     },
     "the_pile": {
         "path": "monology/pile-uncopyrighted",

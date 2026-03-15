@@ -1,5 +1,10 @@
 """Preprocessing module."""
 
+from auralith_pipeline.preprocessing.code_chunker import (
+    ChunkMetadata,
+    CodeChunk,
+    CodeChunker,
+)
 from auralith_pipeline.preprocessing.compliance import AuditLogger, LicenseDetector
 from auralith_pipeline.preprocessing.deduplication import EmbeddingDeduplicator
 from auralith_pipeline.preprocessing.preprocessor import (
@@ -20,6 +25,9 @@ from auralith_pipeline.preprocessing.synthetic import (
 )
 
 __all__ = [
+    "CodeChunker",
+    "CodeChunk",
+    "ChunkMetadata",
     "DataPreprocessor",
     "TextNormalizer",
     "QualityFilter",

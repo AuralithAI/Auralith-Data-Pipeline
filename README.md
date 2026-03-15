@@ -8,7 +8,7 @@ Production-grade multimodal data processing pipeline for training [RT-DLM](https
 
 ## Architecture
 
-![RT-DLM_architecture_transformer_style_v2-Data Pipeline-Data Pipeline](https://github.com/user-attachments/assets/b505c968-b68d-4dbc-95f7-26615284b372)
+![alt text](image.png)
 
 ## Capabilities
 
@@ -36,6 +36,9 @@ Production-grade multimodal data processing pipeline for training [RT-DLM](https
 | **Security** | Multi-jurisdiction PII scrubbing (15+ countries) | ✅ |
 | **Security** | Credential / secret sanitization | ✅ |
 | **Security** | IRSA / Workload Identity (no static keys) | ✅ |
+| **Code** | AST-aware code chunking via tree-sitter (150+ languages) | ✅ |
+| **Code** | Legacy, GPU, DevOps, IaC, HDL, blockchain language support | ✅ |
+| **Code** | Fixed-size fallback for languages without tree-sitter grammars | ✅ |
 | **Pipeline** | `process` command: raw data → production `.safetensors` shards | ✅ |
 
 ## Installation
@@ -52,6 +55,7 @@ pip install "auralith-data-pipeline[all]"
 # Pick only what you need
 pip install "auralith-data-pipeline[quality]"        # + perplexity filter + FAISS dedup
 pip install "auralith-data-pipeline[distributed]"    # + Ray
+pip install "auralith-data-pipeline[code]"           # + tree-sitter AST chunking
 pip install "auralith-data-pipeline[cloud,pdf]"      # + S3/GCS/Azure + PDF extraction
 ```
 
@@ -163,8 +167,9 @@ The full pipeline has three stages:
 ```
   data/raw/              tokenizers/                    shards/
   ├── docs/*.txt    ──►  ├── text/   (BPE)         ──►  ├── shard_000000.safetensors
-  ├── imgs/*.npy    ──►  ├── image/  (VQ codebook) ──►  ├── shard_000001.safetensors
-  ├── audio/*.npy   ──►  ├── audio/  (VQ codebook) ──►  └── ...
+  ├── code/*.py     ──►  │   (code reuses text BPE)──►  ├── shard_000001.safetensors
+  ├── imgs/*.npy    ──►  ├── image/  (VQ codebook) ──►  └── ...
+  ├── audio/*.npy   ──►  ├── audio/  (VQ codebook) ──►
   └── videos/*.mp4  ──►  └── video/  (VQ codebook) ──►
 ```
 
@@ -174,7 +179,8 @@ Organise your data into a single directory. The pipeline auto-detects file types
 
 | Modality | Accepted formats |
 |----------|-----------------|
-| Text | `.txt`, `.md`, `.rst`, `.csv`, `.json`, `.jsonl`, `.tsv`, `.xml`, `.html`, `.py`, `.rs` |
+| Text | `.txt`, `.md`, `.rst`, `.csv`, `.json`, `.jsonl`, `.tsv`, `.xml`, `.html` |
+| Code | `.py`, `.js`, `.ts`, `.java`, `.go`, `.rs`, `.cpp`, `.c`, `.rb`, `.swift`, `.kt`, `.scala`, `.sh`, `.tf`, `.yml`, `.sql`, `.sol`, `.cu`, `.cob`, `.f90` + [150+ more](src/auralith_pipeline/utils/file_types.py) |
 | Image | `.jpg`, `.jpeg`, `.png`, `.bmp`, `.tiff`, `.webp` |
 | Audio | `.wav`, `.mp3`, `.flac`, `.ogg`, `.m4a` |
 | Video | `.mp4`, `.avi`, `.mov`, `.mkv`, `.webm` |
@@ -193,6 +199,10 @@ data/raw/
 ├── corpus/
 │   ├── wikipedia.txt
 │   └── books.txt
+├── code/
+│   ├── main.py
+│   ├── utils.rs
+│   └── deploy.tf
 ├── images/
 │   ├── img_001.npy
 │   └── img_002.npy
@@ -377,13 +387,15 @@ Every shard is RT-DLM compatible. All sequences are padded/truncated to a fixed 
 ## Features
 
 ### Data Processing
-- Multi-source ingestion (HuggingFace, Common Crawl, local files, video)
+- Multi-source ingestion (HuggingFace, Common Crawl, local files, video, code repos)
 - Weighted round-robin interleaving across multiple sources
 - MinHash + FAISS embedding deduplication
 - Quality filtering (length, language, perplexity, LLM-as-Judge)
 - PII removal (automatic detection and redaction)
 - License compliance scanning for code data
 - Document extraction (PDF, DOCX, HTML, Markdown)
+- AST-aware code chunking via tree-sitter (150+ languages)
+- Fixed-size sliding-window fallback for languages without tree-sitter grammars
 - SafeTensors sharding with Zstd compression and SHA-256 checksums
 - Streaming checkpointing with seeded reproducibility (numpy + stdlib RNG)
 - Deterministic resumption from checkpoint (skip-ahead + RNG state restore)
@@ -392,6 +404,7 @@ Every shard is RT-DLM compatible. All sequences are padded/truncated to a fixed 
 - Custom BPE tokenizer (16 special tokens, byte-level fallback, no external dependency)
 - 256 byte tokens (IDs 16–271) for lossless UTF-8 encoding of any input
 - LRU-bounded merge cache (100k entries) for fast encoding
+- Code modality reuses BPE tokens with `<CODE>`/`<CODE_END>` delimiters and modality mask = 4
 - Vector quantization for images, audio, and video
 - Multimodal token fusion with `encode_with_mask()`
 - Configurable vocab size (32k–128k)
@@ -455,6 +468,14 @@ video:
   enabled: false
   frame_strategy: uniform
   max_frames: 32
+
+code:
+  enabled: true
+  chunk_size: 512
+  overlap: 256
+  use_tree_sitter: true            # AST-aware chunking (falls back to fixed-size)
+  min_chunk_chars: 50
+  max_chunk_chars: 16000
 ```
 
 See [`configs/production.yaml`](configs/production.yaml) for the full configuration reference.
@@ -506,6 +527,7 @@ trained, they must not change for the entire model's lifecycle.
 #### Why train your own tokenizers?
 
 - **Text (BPE):** Learns subword units tuned to your domain vocabulary (e.g. medical, legal, code).
+- **Code (BPE):** Reuses the text BPE tokenizer — no separate training needed. Include code in your BPE training corpus for optimal subword coverage (e.g. `def`, `function`, `->`, `::` as single tokens).
 - **Image (VQ):** Learns a discrete codebook that maps image patches → token IDs.
 - **Audio (VQ):** Learns a codebook over mel-spectrogram patches.
 - **Video (VQ):** Same as image, but trained on video frames for temporal consistency.
@@ -515,6 +537,7 @@ trained, they must not change for the entire model's lifecycle.
 | Modality | Minimum | Recommended | Notes |
 |----------|---------|-------------|-------|
 | Text | 1 MB | 1–10 GB | More data = better subword coverage |
+| Code | — | Mix into text corpus | Include 30–50% code in BPE training for best results |
 | Image | 100 images | 10k+ images | `.npy` arrays (H, W, 3) or JPEG/PNG |
 | Audio | 100 files | 10k+ files | `.npy` waveforms or `.wav/.flac` |
 | Video | 50 videos | 1k+ videos | `.mp4/.avi/.mov` — frames extracted automatically |
@@ -600,6 +623,55 @@ Each shard contains 4 tensors matching the [SafeTensors Schema v2](#safetensors-
 | 100,000+ | Image VQ codes (offset to avoid collisions) |
 | 200,000+ | Audio VQ codes |
 | 300,000+ | Video VQ codes |
+
+### Code Modality
+
+Code is the **fifth modality** (modality mask = `4`). Unlike image/audio/video which use VQ
+codebooks, code **reuses the same BPE token IDs as text** — this is industry-standard
+(GPT-4, StarCoder, Code Llama, DeepSeek-Coder all do this).
+
+**How it works:**
+
+1. **Classification** — Files are classified as code by extension (150+ supported: `.py`, `.rs`, `.go`, `.cu`, `.tf`, `.cob`, `.f90`, `.sol`, etc.)
+2. **Chunking** — Code files are split into semantic chunks via [tree-sitter](https://tree-sitter.github.io/) AST parsing (functions, classes, methods). Languages without tree-sitter grammars use a fixed-size sliding window fallback.
+3. **Tokenization** — Chunks are BPE-encoded and wrapped in `<CODE>` (ID 13) / `<CODE_END>` (ID 14) delimiters.
+4. **Modality mask** — All tokens between `<CODE>` and `<CODE_END>` are marked with `modality_mask = 4`, allowing the model to apply code-specific attention or loss weighting.
+
+**Supported language categories:**
+
+| Category | Examples |
+|----------|----------|
+| Mainstream | Python, JavaScript, TypeScript, Java, Go, Rust, C/C++, C#, Ruby, PHP, Swift, Kotlin, Scala |
+| Legacy / Mainframe | COBOL, Fortran, Ada, Pascal, VB, RPG, ABAP, REXX |
+| GPU / HPC | CUDA, OpenCL, HLSL, GLSL, Metal, WGSL |
+| DevOps / IaC | Bash, PowerShell, Terraform, Ansible YAML, Dockerfile, Nix, CMake |
+| Config-as-code | TOML, INI, .env, .properties, Gradle, SBT |
+| Web | Vue, Svelte, Astro, CSS/SCSS/LESS, GraphQL |
+| Blockchain | Solidity, Move, Vyper, Cairo |
+| HDL | SystemVerilog, VHDL |
+| Serialization / IDL | Protobuf, Thrift, FlatBuffers, Smithy, CUE, Dhall, Jsonnet, Rego |
+| Functional | Haskell, OCaml, Elm, Clojure, Elixir, Erlang, F#, Racket, PureScript |
+
+> **Best practice:** Include 30–50% code in your BPE training corpus so the
+> tokenizer learns code-specific subwords (`def`, `function`, `->`, `::`,
+> `__init__`, `const`) as single tokens rather than splitting them.
+
+#### Clone and Process a GitHub Repository
+
+```bash
+# Clone a repo locally
+ # Clone and process a GitHub repo in one step
+ auralith-pipeline clone-repo \
+   --url https://github.com/user/repo \
+   --output shards/ \
+   --tokenizers tokenizers/
+
+# Then process as usual
+auralith-pipeline process \
+  --input data/code/repo \
+  --output shards/ \
+  --tokenizers tokenizers/
+```
 
 ## Distributed Processing
 
@@ -687,8 +759,8 @@ coordinator:
 ## Development
 
 ```bash
-# Install dev dependencies
-pip install -e ".[dev]"
+# Install dev dependencies (includes tree-sitter for code tests)
+pip install -e ".[dev,code]"
 
 # Run all tests
 pytest tests/ -v
@@ -712,9 +784,11 @@ auralith_pipeline/
 │   └── pipeline_config.py        # All config dataclasses
 ├── sources/
 │   ├── data_sources.py           # HuggingFace, local, JSONL sources
+│   ├── code.py                   # LocalCodeSource + GitHubCodeSource
 │   └── video.py                  # Video frame sampler
 ├── preprocessing/
 │   ├── preprocessor.py           # Text normalization, MinHash, PII
+│   ├── code_chunker.py           # AST-aware code chunking (tree-sitter + fallback)
 │   ├── quality.py                # Perplexity + LLM judge
 │   ├── deduplication.py          # FAISS embedding dedup
 │   ├── synthetic.py              # Local data augmentation
@@ -744,6 +818,7 @@ auralith_pipeline/
 ├── spark/                        # Apache Spark transforms
 └── utils/
     ├── helpers.py                # Formatting utilities
+    ├── file_types.py             # Extension sets (TEXT/CODE/IMAGE/AUDIO/VIDEO) + classify_file()
     └── tracking.py               # MLflow/W&B + lineage
 
 docker/kubernetes/
@@ -755,6 +830,7 @@ docker/kubernetes/
 
 tests/
 ├── test_cli.py                   # CLI command tests (process, train-tokenizer, etc.)
+├── test_code_modality.py         # Code modality tests (126 tests — chunking, sources, extensions)
 ├── test_distributed.py           # Distributed module tests (50 tests)
 ├── test_pipeline.py              # Core pipeline tests
 ├── test_tokenization.py          # Tokenizer tests

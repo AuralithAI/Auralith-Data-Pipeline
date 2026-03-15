@@ -133,6 +133,128 @@ video:
   codebook_size: 1024
   video_token_offset: 300000
 
+# Code processing
+code:
+  enabled: true
+  chunk_size: 512           # target chunk size in tokens
+  overlap: 256              # overlap between consecutive chunks (tokens)
+  use_tree_sitter: true     # AST-aware chunking (requires tree-sitter extra)
+  min_chunk_chars: 50
+  max_chunk_chars: 16000
+  max_file_size_bytes: 2000000   # skip files larger than ~2 MB
+  supported_languages:
+    # Mainstream / general-purpose
+    - python
+    - javascript
+    - typescript
+    - java
+    - go
+    - rust
+    - cpp
+    - c
+    - ruby
+    - c_sharp
+    - php
+    - swift
+    - kotlin
+    - scala
+    - lua
+    - zig
+    - dart
+    # Functional
+    - elixir
+    - erlang
+    - haskell
+    - ocaml
+    - fsharp
+    - clojure
+    - commonlisp
+    - elisp
+    - scheme
+    - racket
+    - elm
+    - purescript
+    # JVM / .NET
+    - groovy
+    - vb
+    # Systems
+    - nim
+    - crystal
+    - d
+    - v
+    # Science / data
+    - julia
+    - r
+    - sql
+    - sas
+    - stata
+    # Legacy / mainframe
+    - cobol
+    - fortran
+    - ada
+    - pascal
+    - rpg
+    - abap
+    - rexx
+    - prolog
+    # GPU / HPC / shaders
+    - cuda
+    - hlsl
+    - glsl
+    - metal
+    - wgsl
+    # DevOps / IaC / scripting
+    - bash
+    - powershell
+    - batch
+    - hcl
+    - yaml
+    - dockerfile
+    - nix
+    - starlark
+    - cmake
+    # Config-as-code
+    - toml
+    - ini
+    - conf
+    - dotenv
+    - properties
+    # Web / frontend
+    - vue
+    - svelte
+    - astro
+    - css
+    - scss
+    - less
+    - graphql
+    # Scripting / text processing
+    - perl
+    - awk
+    - sed
+    - tcl
+    # Blockchain / smart contracts
+    - solidity
+    - move
+    - vyper
+    - cairo
+    # HDL / hardware
+    - systemverilog
+    - vhdl
+    # Assembly / IR
+    - asm
+    - llvm
+    # Serialization / IDL
+    - protobuf
+    - thrift
+    - capnproto
+    - flatbuffers
+    - smithy
+    - jsonnet
+    - cue
+    - dhall
+    - pkl
+    - rego
+
 # Storage settings for upload
 storage:
   backend: huggingface

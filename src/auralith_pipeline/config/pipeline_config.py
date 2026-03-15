@@ -92,6 +92,140 @@ class VideoConfig:
 
 
 @dataclass
+class CodeConfig:
+    """Code processing configuration.
+
+    Code reuses BPE tokens (IDs 0-50,256) wrapped in <CODE>/<CODE_END>
+    markers.  No separate token offset is needed -- only the modality_mask
+    changes (value 4).
+    """
+
+    enabled: bool = True
+    chunk_size: int = 512
+    overlap: int = 256
+    use_tree_sitter: bool = True
+    min_chunk_chars: int = 50
+    max_chunk_chars: int = 16_000
+    supported_languages: list[str] = field(
+        default_factory=lambda: [
+            # Mainstream
+            "python",
+            "javascript",
+            "typescript",
+            "java",
+            "go",
+            "rust",
+            "cpp",
+            "c",
+            "ruby",
+            "c_sharp",
+            "php",
+            "swift",
+            "kotlin",
+            "scala",
+            "lua",
+            "zig",
+            "dart",
+            # Functional
+            "elixir",
+            "erlang",
+            "haskell",
+            "ocaml",
+            "fsharp",
+            "clojure",
+            "commonlisp",
+            "elisp",
+            "scheme",
+            "racket",
+            "elm",
+            "purescript",
+            # JVM / .NET
+            "groovy",
+            "vb",
+            # Systems
+            "nim",
+            "crystal",
+            "d",
+            "v",
+            # Science / data
+            "julia",
+            "r",
+            "sql",
+            "sas",
+            "stata",
+            # Legacy / mainframe
+            "cobol",
+            "fortran",
+            "ada",
+            "pascal",
+            "rpg",
+            "abap",
+            "rexx",
+            "prolog",
+            # GPU / HPC
+            "cuda",
+            "hlsl",
+            "glsl",
+            "metal",
+            "wgsl",
+            # DevOps / IaC / scripting
+            "bash",
+            "powershell",
+            "batch",
+            "hcl",
+            "yaml",
+            "dockerfile",
+            "nix",
+            "starlark",
+            "cmake",
+            # Config-as-code
+            "toml",
+            "ini",
+            "conf",
+            "dotenv",
+            "properties",
+            # Web / frontend
+            "vue",
+            "svelte",
+            "astro",
+            "css",
+            "scss",
+            "less",
+            "graphql",
+            # Scripting
+            "perl",
+            "awk",
+            "sed",
+            "tcl",
+            # Blockchain / smart contracts
+            "solidity",
+            "move",
+            "vyper",
+            "cairo",
+            # HDL / hardware
+            "systemverilog",
+            "vhdl",
+            # Assembly / IR
+            "asm",
+            "llvm",
+            # Serialization / IDL
+            "protobuf",
+            "thrift",
+            "capnproto",
+            "flatbuffers",
+            "smithy",
+            "jsonnet",
+            "cue",
+            "dhall",
+            "pkl",
+            "rego",
+        ]
+    )
+    embed_model: str | None = None  # optional external embedder (e.g. voyage-code-3)
+    max_file_size_bytes: int = 1_000_000
+
+
+@dataclass
 class StorageConfig:
     """Storage configuration."""
 
@@ -200,6 +334,7 @@ class PipelineConfig:
     tokenization: TokenizationConfig = field(default_factory=TokenizationConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     video: VideoConfig = field(default_factory=VideoConfig)
+    code: CodeConfig = field(default_factory=CodeConfig)
     tracking: TrackingConfig = field(default_factory=TrackingConfig)
     compliance: ComplianceConfig = field(default_factory=ComplianceConfig)
     security: SecurityConfig = field(default_factory=SecurityConfig)
@@ -260,6 +395,7 @@ class PipelineConfig:
         token_data = data.pop("tokenization", {})
         storage_data = data.pop("storage", {})
         video_data = data.pop("video", {})
+        code_data = data.pop("code", {})
         tracking_data = data.pop("tracking", {})
         compliance_data = data.pop("compliance", {})
         security_data = data.pop("security", {})
@@ -277,6 +413,7 @@ class PipelineConfig:
             tokenization=TokenizationConfig(**token_data),
             storage=StorageConfig(**storage_data),
             video=VideoConfig(**_convert_video_data(video_data)),
+            code=CodeConfig(**code_data),
             tracking=TrackingConfig(**tracking_data),
             compliance=ComplianceConfig(**compliance_data),
             security=SecurityConfig(**security_data),
