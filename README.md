@@ -660,7 +660,11 @@ codebooks, code **reuses the same BPE token IDs as text** — this is industry-s
 
 ```bash
 # Clone a repo locally
-auralith-pipeline clone-repo https://github.com/user/repo --dest ./data/code/repo
+ # Clone and process a GitHub repo in one step
+ auralith-pipeline clone-repo \
+   --url https://github.com/user/repo \
+   --output shards/ \
+   --tokenizers tokenizers/
 
 # Then process as usual
 auralith-pipeline process \
