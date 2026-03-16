@@ -128,8 +128,33 @@ class TestDataSources:
         assert result is not None
         assert None in call_log
 
+    def test_modality_not_passed_to_load_dataset(self):
+        """Registry 'modality' must not leak into load_dataset kwargs."""
+        from auralith_pipeline.sources.data_sources import create_source
 
-class TestPreprocessing:
+        source = create_source("the_stack", streaming=True, max_samples=5)
+        # modality should be stored on the source, not in kwargs
+        assert source.modality == "code"
+        assert "modality" not in source.kwargs
+
+    def test_code_modality_propagated_to_datasample(self):
+        """DataSample.modality should reflect the registry modality."""
+        import unittest.mock as mock
+
+        from auralith_pipeline.sources.data_sources import create_source
+
+        source = create_source("the_stack", streaming=True, max_samples=1)
+
+        fake_item = {"content": "print('hello')", "lang": "python"}
+        fake_ds = [fake_item]
+
+        with mock.patch.object(source, "_load_dataset", return_value=fake_ds):
+            samples = list(source)
+
+        assert len(samples) == 1
+        assert samples[0].modality == "code"
+        assert samples[0].content == "print('hello')"
+
     """Tests for preprocessing."""
 
     def test_text_normalizer(self):

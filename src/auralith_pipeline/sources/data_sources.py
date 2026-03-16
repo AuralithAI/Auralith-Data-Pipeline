@@ -58,6 +58,7 @@ class HuggingFaceSource(DataSource):
         text_column: str = "text",
         streaming: bool = True,
         max_samples: int | None = None,
+        modality: Literal["text", "image", "audio", "video", "code"] = "text",
         **kwargs,
     ):
         self.path = path
@@ -66,6 +67,7 @@ class HuggingFaceSource(DataSource):
         self.text_column = text_column
         self.streaming = streaming
         self.max_samples = max_samples
+        self.modality = modality
         self.kwargs = kwargs
         self._dataset = None
         self._len = None
@@ -227,6 +229,7 @@ class HuggingFaceSource(DataSource):
                     "split": self.split,
                     **{k: v for k, v in item.items() if k != self.text_column},
                 },
+                modality=self.modality,
             )
             count += 1
 
@@ -441,10 +444,12 @@ def create_source(
 
     config = DATASET_REGISTRY[name].copy()
     config.pop("description", None)
+    modality = config.pop("modality", "text")
     config.update(kwargs)
 
     return HuggingFaceSource(
         streaming=streaming,
         max_samples=max_samples,
+        modality=modality,
         **config,
     )
