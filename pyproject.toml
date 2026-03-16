@@ -62,6 +62,16 @@ pdf = [
     "python-docx>=1.0.0,<2.0",
     "python-pptx>=0.6.23,<1.0",
     "openpyxl>=3.1.0,<4.0",
+    "striprtf>=0.0.26,<1.0",
+]
+# Compound document extraction — scientific and specialised formats
+compound = [
+    "h5py>=3.9.0,<4.0",
+    "astropy>=5.3.0,<7.0",
+    "zarr>=2.16.0,<3.0",
+    "warcio>=1.7.4,<2.0",
+    "rarfile>=4.1,<5.0",
+    "extract-msg>=0.48.0,<1.0",
 ]
 # Cloud storage backends (AWS S3, Google Cloud Storage, Azure Blob)
 cloud = [
@@ -106,9 +116,15 @@ dev = [
     "ruff>=0.1.0",
     "mypy>=1.5.0",
     "pre-commit>=3.4.0",
+    # Document processing — needed for compound document tests
+    "openpyxl>=3.1.0,<4.0",
+    "python-docx>=1.0.0,<2.0",
+    "python-pptx>=0.6.23,<1.0",
+    "pdfplumber>=0.10.0,<1.0",
+    "striprtf>=0.0.26,<1.0",
 ]
 all = [
-    "auralith-data-pipeline[pdf,cloud,multimodal,quality,tracking,distributed,code,dev]",
+    "auralith-data-pipeline[pdf,compound,cloud,multimodal,quality,tracking,distributed,code,dev]",
 ]
 
 [project.scripts]

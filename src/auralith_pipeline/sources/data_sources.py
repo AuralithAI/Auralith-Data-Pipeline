@@ -142,11 +142,11 @@ class HuggingFaceSource(DataSource):
         method tries ``'default'`` and then ``None`` (no config) before
         giving up.  Returns the loaded dataset or ``None``.
         """
-        from datasets import load_dataset
-
         # Parse available configs from the error message when possible
         # e.g. "BuilderConfig 'data' not found. Available: ['default']"
         import re
+
+        from datasets import load_dataset
 
         available_match = re.search(r"Available:\s*\[([^\]]+)\]", original_error)
         fallback_names: list[str | None] = []
@@ -202,8 +202,7 @@ class HuggingFaceSource(DataSource):
                 continue
 
         logger.error(
-            "All BuilderConfig fallbacks exhausted for '%s'. "
-            "Original error: %s",
+            "All BuilderConfig fallbacks exhausted for '%s'. " "Original error: %s",
             self.path,
             original_error,
         )

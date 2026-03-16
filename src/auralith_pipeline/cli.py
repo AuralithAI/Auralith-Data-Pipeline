@@ -180,6 +180,71 @@ def collect(
     click.echo(stats.summary())
 
 
+@main.command(name="ingest-documents")
+@click.option(
+    "--source-dir",
+    "-s",
+    required=True,
+    type=click.Path(exists=True),
+    help="Directory containing compound documents (DOCX, XLSX, DICOM, GeoTIFF, etc.)",
+)
+@click.option("--output", "-o", default="./data/shards", help="Output shard directory")
+@click.option("--max-samples", "-n", type=int, default=None, help="Maximum samples to process")
+@click.option("--no-images", is_flag=True, help="Skip embedded image extraction")
+@click.option("--no-tables", is_flag=True, help="Skip table extraction")
+@click.option("--no-audio", is_flag=True, help="Skip audio track extraction")
+@click.option("--staging-dir", default=None, help="Staging directory for binary assets")
+@click.option("--preset", type=click.Choice(["small", "medium", "production"]), default="medium")
+def ingest_documents(
+    source_dir: str,
+    output: str,
+    max_samples: int | None,
+    no_images: bool,
+    no_tables: bool,
+    no_audio: bool,
+    staging_dir: str | None,
+    preset: str,
+):
+    """Ingest compound documents (DOCX, XLSX, PDF, DICOM, GeoTIFF, MKV, etc.)
+
+    Decomposes multi-modal files into text, image, audio, and table segments,
+    then processes them through the standard pipeline into SafeTensors shards.
+
+    Example:
+
+        auralith-pipeline ingest-documents -s data/raw_documents/ -o data/shards/ -n 50000
+    """
+    from auralith_pipeline.sources.compound import CompoundDocumentSource
+
+    click.echo(f"Ingesting compound documents from: {source_dir}")
+
+    config = PipelineConfig.from_preset(preset)
+    config.output_dir = output
+
+    pipeline = Pipeline(config)
+
+    source = CompoundDocumentSource(
+        root_dir=source_dir,
+        extract_images=not no_images,
+        extract_tables=not no_tables,
+        extract_audio=not no_audio,
+        staging_dir=staging_dir,
+        max_samples=max_samples,
+    )
+    pipeline.add_source(source)
+
+    click.echo(f"Found {len(source)} compound files")
+
+    with click.progressbar(length=max_samples or len(source) * 10, label="Processing") as bar:
+
+        def progress(count):
+            bar.update(1000)
+
+        stats = pipeline.run(max_samples=max_samples, progress_callback=progress)
+
+    click.echo(stats.summary())
+
+
 @main.command()
 @click.option("--source", "-s", required=True, help="Local source directory")
 @click.option(
