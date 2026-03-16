@@ -71,7 +71,7 @@ class HuggingFaceSource(DataSource):
         self._len = None
 
     def _load_dataset(self):
-        """Lazy load the dataset."""
+        """Lazy load the dataset with resilient config resolution."""
         if self._dataset is None:
             import time
 
@@ -93,19 +93,32 @@ class HuggingFaceSource(DataSource):
                     )
                     return self._dataset
                 except Exception as e:
-                    error_msg = str(e).lower()
+                    error_msg = str(e)
+                    error_lower = error_msg.lower()
 
                     # Check for deprecated dataset scripts
-                    if "dataset scripts are no longer supported" in error_msg:
+                    if "dataset scripts are no longer supported" in error_lower:
                         logger.error(
                             f"Dataset '{self.path}' uses deprecated Python scripts. "
                             f"Try using 'wikimedia/wikipedia' instead of 'wikipedia'."
                         )
                         raise
 
+                    # ── BuilderConfig mismatch ───────────────────────
+                    # HuggingFace datasets may rename or remove configs.
+                    # When a config is not found, try falling back to
+                    # 'default' or None (no config) before giving up.
+                    if "builderconfig" in error_lower and "not found" in error_lower:
+                        fallback = self._try_builderconfig_fallback(error_msg)
+                        if fallback is not None:
+                            self._dataset = fallback
+                            return self._dataset
+                        # If fallback also failed, let the error propagate
+                        raise
+
                     # Retry on timeout errors
                     if (
-                        "timeout" in error_msg or "timed out" in error_msg
+                        "timeout" in error_lower or "timed out" in error_lower
                     ) and attempt < max_retries - 1:
                         logger.warning(
                             f"Timeout loading dataset (attempt {attempt + 1}/{max_retries}). "
@@ -121,6 +134,80 @@ class HuggingFaceSource(DataSource):
                         raise
 
         return self._dataset
+
+    def _try_builderconfig_fallback(self, original_error: str):
+        """Attempt to load the dataset with fallback config names.
+
+        When HuggingFace renames or removes a ``BuilderConfig``, this
+        method tries ``'default'`` and then ``None`` (no config) before
+        giving up.  Returns the loaded dataset or ``None``.
+        """
+        from datasets import load_dataset
+
+        # Parse available configs from the error message when possible
+        # e.g. "BuilderConfig 'data' not found. Available: ['default']"
+        import re
+
+        available_match = re.search(r"Available:\s*\[([^\]]+)\]", original_error)
+        fallback_names: list[str | None] = []
+
+        if available_match:
+            configs = [c.strip().strip("'\"") for c in available_match.group(1).split(",")]
+            fallback_names.extend(configs)
+            logger.info(
+                "BuilderConfig '%s' not found for '%s'. "
+                "Available configs: %s — trying fallbacks.",
+                self.dataset_name,
+                self.path,
+                configs,
+            )
+        else:
+            # If we can't parse available configs, try common names
+            fallback_names.extend(["default"])
+
+        # Always try None (no config) as last resort
+        fallback_names.append(None)
+
+        # Remove the originally-requested name to avoid retrying it
+        fallback_names = [n for n in fallback_names if n != self.dataset_name]
+
+        for name in fallback_names:
+            try:
+                logger.info(
+                    "Retrying dataset '%s' with config=%s",
+                    self.path,
+                    repr(name),
+                )
+                ds = load_dataset(
+                    self.path,
+                    name,
+                    split=self.split,
+                    streaming=self.streaming,
+                    **self.kwargs,
+                )
+                logger.warning(
+                    "Successfully loaded '%s' using config=%s instead of '%s'. "
+                    "Consider updating the dataset registry entry.",
+                    self.path,
+                    repr(name),
+                    self.dataset_name,
+                )
+                return ds
+            except Exception:
+                logger.debug(
+                    "Fallback config=%s also failed for '%s'.",
+                    repr(name),
+                    self.path,
+                )
+                continue
+
+        logger.error(
+            "All BuilderConfig fallbacks exhausted for '%s'. "
+            "Original error: %s",
+            self.path,
+            original_error,
+        )
+        return None
 
     def __iter__(self) -> Iterator[DataSample]:
         dataset = self._load_dataset()
@@ -310,7 +397,6 @@ DATASET_REGISTRY = {
     },
     "the_stack": {
         "path": "bigcode/the-stack-dedup",
-        "name": "data",
         "text_column": "content",
         "description": "The Stack (deduplicated) - source code (3TB)",
         "split": "train",

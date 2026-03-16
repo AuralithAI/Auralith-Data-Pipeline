@@ -62,6 +62,72 @@ class TestDataSources:
         assert isinstance(DEPRECATED_DATASETS, dict)
         assert "scientific_papers" in DEPRECATED_DATASETS
 
+    def test_the_stack_registry_has_no_hardcoded_config(self):
+        """the_stack should not specify a 'name' config to avoid BuilderConfig mismatches."""
+        from auralith_pipeline.sources import DATASET_REGISTRY
+
+        entry = DATASET_REGISTRY["the_stack"]
+        assert "name" not in entry, (
+            "the_stack should not have a hardcoded 'name' config — "
+            "HuggingFace removed the 'data' config; use default instead."
+        )
+
+    def test_builderconfig_fallback_parses_available(self):
+        """_try_builderconfig_fallback should parse available configs from error message."""
+        from auralith_pipeline.sources.data_sources import HuggingFaceSource
+
+        source = HuggingFaceSource(
+            path="test/dataset",
+            name="nonexistent",
+            streaming=True,
+        )
+
+        # Mock load_dataset to succeed on 'default'
+        call_log = []
+
+        import unittest.mock as mock
+
+        def mock_load(path, name, **kwargs):
+            call_log.append(name)
+            if name == "default":
+                return ["fake_dataset"]
+            raise ValueError(f"BuilderConfig '{name}' not found. Available: ['default']")
+
+        # Test the fallback method directly
+        error_msg = "BuilderConfig 'nonexistent' not found. Available: ['default']"
+        with mock.patch("datasets.load_dataset", mock_load):
+            result = source._try_builderconfig_fallback(error_msg)
+
+        assert result is not None
+        assert "default" in call_log
+
+    def test_builderconfig_fallback_tries_none_as_last_resort(self):
+        """_try_builderconfig_fallback should try None when nothing else works."""
+        from auralith_pipeline.sources.data_sources import HuggingFaceSource
+
+        source = HuggingFaceSource(
+            path="test/dataset",
+            name="nonexistent",
+            streaming=True,
+        )
+
+        call_log = []
+
+        import unittest.mock as mock
+
+        def mock_load(path, name, **kwargs):
+            call_log.append(name)
+            if name is None:
+                return ["fake_dataset"]
+            raise ValueError(f"BuilderConfig '{name}' not found. Available: ['alt']")
+
+        error_msg = "BuilderConfig 'nonexistent' not found. Available: ['alt']"
+        with mock.patch("datasets.load_dataset", mock_load):
+            result = source._try_builderconfig_fallback(error_msg)
+
+        assert result is not None
+        assert None in call_log
+
 
 class TestPreprocessing:
     """Tests for preprocessing."""
