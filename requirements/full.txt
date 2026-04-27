@@ -31,4 +31,4 @@ redis>=5.0.0
 psutil>=5.9.0
 
 # Large-scale processing
-pyspark>=3.5.0
+pyspark>=4.1.1
